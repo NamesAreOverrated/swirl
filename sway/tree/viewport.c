@@ -69,8 +69,8 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	}
 
 	int gaps = ws->gaps_inner;
-	double usable_w = parent->width - ws->current_gaps.left - ws->current_gaps.right;
-	double usable_h = parent->height - ws->current_gaps.top - ws->current_gaps.bottom;
+	double usable_w = parent->width;
+	double usable_h = parent->height;
 
 	double x = 0;
 	for (int i = 0; i < ws->tiling->length; ++i) {
@@ -188,10 +188,8 @@ void handle_focus_viewport(struct sway_seat *seat,
 	}
 
 	int gaps = ws->gaps_inner;
-	double area_w = ws->width - ws->current_gaps.left
-		- ws->current_gaps.right;
-	double area_h = ws->height - ws->current_gaps.top
-		- ws->current_gaps.bottom;
+	double area_w = ws->width;
+	double area_h = ws->height;
 
 	// Horizontal — edge-snap column into viewport
 	double total_w = total_extent_h(ws->tiling, gaps);
