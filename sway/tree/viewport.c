@@ -72,11 +72,15 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	double usable_w = parent->width;
 	double usable_h = parent->height;
 
+	int n = ws->tiling->length;
+	double gaps_total = n > 1 ? gaps * (n - 1) : 0;
+	double content_w = usable_w - gaps_total;
+
 	double x = 0;
 	for (int i = 0; i < ws->tiling->length; ++i) {
 		struct sway_container *col = ws->tiling->items[i];
 
-		double col_w = round(usable_w * col->width_fraction);
+		double col_w = round(content_w * col->width_fraction);
 		double col_h = usable_h;
 
 		if (col_w < 10 || col_h < 10) {
@@ -106,13 +110,16 @@ void viewport_arrange_windows(struct sway_container *col) {
 
 	struct sway_workspace *ws = col->pending.workspace;
 	double gap = ws ? ws->gaps_inner : 0;
-	double y = 0;
 
+	int n = col->pending.children->length;
+	double gaps_total = n > 1 ? gap * (n - 1) : 0;
+	double content_h = col->pending.height - gaps_total;
+
+	double y = 0;
 	for (int i = 0; i < col->pending.children->length; ++i) {
 		struct sway_container *child = col->pending.children->items[i];
 
-		double child_h = round(child->height_fraction
-			* col->pending.height);
+		double child_h = round(content_h * child->height_fraction);
 		if (child_h < 10) {
 			child_h = 10;
 		}
