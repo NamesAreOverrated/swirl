@@ -645,9 +645,27 @@ static void arrange_output(struct sway_output *output, int width, int height) {
 				struct wlr_box *area = &output->usable_area;
 				struct side_gaps *gaps = &child->current_gaps;
 
+				double old_tx = child->layers.tiling->node.x;
+				double old_ty = child->layers.tiling->node.y;
+				double new_tx = gaps->left + area->x
+					- child->current.viewport_x;
+				double new_ty = gaps->top + area->y
+					- child->current.viewport_y;
+
+				if (old_tx != new_tx || old_ty != new_ty) {
+					struct sway_prop_config cfg = {
+						.type = SWAY_ANIM_SPRING,
+						.damping_ratio = 1.0,
+						.stiffness = 800.0,
+						.epsilon = 0.001,
+					};
+					sway_anim_move(&child->layers.tiling->node,
+						old_tx, old_ty, new_tx, new_ty,
+						cfg, false);
+				}
+
 				wlr_scene_node_set_position(&child->layers.tiling->node,
-					gaps->left + area->x - child->current.viewport_x,
-					gaps->top + area->y - child->current.viewport_y);
+					new_tx, new_ty);
 
 				arrange_workspace_tiling(child,
 					area->width - gaps->left - gaps->right,
