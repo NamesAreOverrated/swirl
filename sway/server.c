@@ -64,6 +64,7 @@
 #include "sway/input/cursor.h"
 #include "sway/tree/root.h"
 #include "sway/tree/workspace.h"
+#include "sway/tree/animation.h"
 
 #if WLR_HAS_XWAYLAND
 #include <wlr/xwayland/shell.h>
@@ -251,6 +252,7 @@ bool server_init(struct sway_server *server) {
 		return false;
 	}
 	server->wl_event_loop = wl_display_get_event_loop(server->wl_display);
+	sway_anim_init(server->wl_event_loop);
 
 	wl_display_set_global_filter(server->wl_display, filter_global, NULL);
 	wl_display_set_default_max_buffer_size(server->wl_display, 1024 * 1024);

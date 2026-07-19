@@ -31,6 +31,7 @@
 #include "sway/server.h"
 #include "sway/sway_text_node.h"
 #include "sway/tree/arrange.h"
+#include "sway/tree/animation.h"
 #include "sway/tree/column.h"
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"

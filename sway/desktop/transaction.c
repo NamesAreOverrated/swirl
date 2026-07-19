@@ -15,6 +15,7 @@
 #include "sway/tree/node.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
+#include "sway/tree/animation.h"
 #include "list.h"
 #include "log.h"
 
@@ -231,6 +232,7 @@ static void apply_workspace_state(struct sway_workspace *ws,
 static void apply_container_state(struct sway_container *container,
 		struct sway_container_state *state) {
 	struct sway_view *view = container->view;
+	struct sway_container_state old = container->current; // capture before memcpy
 	// There are separate children lists for each instruction state, the
 	// container's current state and the container's pending state
 	// (ie. con->children). The list itself needs to be freed here.
@@ -239,6 +241,20 @@ static void apply_container_state(struct sway_container *container,
 	list_free(container->current.children);
 
 	memcpy(&container->current, state, sizeof(struct sway_container_state));
+
+	if ((old.x != container->current.x || old.y != container->current.y)
+			&& container->scene_tree) {
+		struct sway_anim_config cfg = {
+			.type = SWAY_ANIM_SPRING,
+			.damping_ratio = 1.0,
+			.stiffness = 800.0,
+			.epsilon = 0.001,
+		};
+		sway_anim_move(&container->scene_tree->node,
+			old.x, old.y,
+			container->current.x, container->current.y,
+			cfg);
+	}
 
 	if (view) {
 		if (view->saved_surface_tree) {
@@ -635,6 +651,7 @@ static void arrange_output(struct sway_output *output, int width, int height) {
 					area->width - gaps->left - gaps->right,
 					area->height - gaps->top - gaps->bottom);
 				arrange_workspace_floating(child);
+				sway_anim_sync();
 			}
 		} else {
 			wlr_scene_node_set_enabled(&child->layers.tiling->node, false);

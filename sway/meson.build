@@ -212,6 +212,7 @@ sway_sources = files(
 	'commands/output/color_profile.c',
 
 	'tree/arrange.c',
+	'tree/animation.c',
 	'tree/container.c',
 	'tree/layout.c',
 	'tree/node.c',

@@ -6,6 +6,7 @@
 #include "sway/desktop/transaction.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
+#include "sway/tree/animation.h"
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"
 #include "sway/tree/view.h"
@@ -146,9 +147,26 @@ void column_scroll_vert_to(struct sway_container *col,
 		? col->pending.workspace->gaps_inner : 0;
 	double total_h = total_extent_v(col->pending.children, gaps);
 	double max_y = total_h > area_h ? total_h - area_h : 0.0;
-	col->pending.scroll_y = edge_snap_vert(win->pending.y,
+
+	double old_scroll_y = col->pending.scroll_y;
+	double new_scroll_y = edge_snap_vert(win->pending.y,
 		win->pending.height,
-		col->pending.scroll_y, area_h, max_y);
+		old_scroll_y, area_h, max_y);
+	col->pending.scroll_y = new_scroll_y;
+
+	if (col->content_tree) {
+		struct sway_anim_config cfg = {
+			.type = SWAY_ANIM_SPRING,
+			.damping_ratio = 1.0,
+			.stiffness = 800.0,
+			.epsilon = 0.001,
+		};
+		sway_anim_move(&col->content_tree->node,
+			0, -old_scroll_y,
+			0, -new_scroll_y,
+			cfg);
+	}
+
 	node_set_dirty(&col->node);
 }
 
