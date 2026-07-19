@@ -8,6 +8,12 @@
 #include "sway/server.h"
 #include "sway/tree/animation.h"
 
+/*
+ * DATA-DRIVEN  -> operates on wlr_scene_node *, knows nothing about sway types
+ * NEVER RESTART -> existing animation only updates to_x/to_y, no snap
+ * NEVER CANCEL  -> no cancel API, always runs to completion
+ */
+
 struct sway_anim {
 	struct wl_list link;
 	struct wlr_scene_node *node;
@@ -186,12 +192,9 @@ void sway_anim_move(struct wlr_scene_node *node,
 
 	wl_list_for_each(anim, &animations, link) {
 		if (anim->node == node) {
-			anim->from_x = from_x;
-			anim->from_y = from_y;
+			// NEVER RESTART — only retarget, preserve visual position & timing
 			anim->to_x = to_x;
 			anim->to_y = to_y;
-			clock_gettime(CLOCK_MONOTONIC, &anim->start);
-			wlr_scene_node_set_position(node, from_x, from_y);
 			return;
 		}
 	}

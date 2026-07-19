@@ -1,6 +1,23 @@
 #ifndef _SWAY_ANIMATION_H
 #define _SWAY_ANIMATION_H
 
+/*
+ * ANIMATION SYSTEM
+ *
+ * DATA-DRIVEN:  Operates purely on wlr_scene_node pointers.
+ *               Knows nothing about containers, views, columns, or workspaces.
+ *
+ * NEVER RESTART: If a node already has an animation in flight, only the
+ *                target values are updated.  The current visual position
+ *                and elapsed time are preserved — no snap, no restart.
+ *
+ * NEVER CANCEL:  Once queued, an animation runs to completion (spring
+ *                settles or ease finishes).  There is no cancel API.
+ *
+ * The animation timer fires at ~60 Hz while any animations are active.
+ * When the list is empty the timer is disabled (zero idle cost).
+ */
+
 #include <stdbool.h>
 #include <wlr/types/wlr_scene.h>
 
