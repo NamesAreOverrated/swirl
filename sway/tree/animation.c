@@ -18,6 +18,7 @@ struct sway_anim {
 	struct wl_list link;
 	struct wlr_scene_node *node;
 	enum sway_anim_type type;
+	bool queued;
 
 	double from_x, from_y, to_x, to_y;
 
@@ -108,6 +109,27 @@ static double lerp(double a, double b, double t) {
 	return a + (b - a) * t;
 }
 
+// True if a newer entry for the same node is closer to the tail (prev).
+// Oldest entry is active; all newer ones are queued behind it.
+static bool has_older_for_node(struct sway_anim *anim) {
+	struct wl_list *n = anim->link.next;
+	while (n != &animations) {
+		struct sway_anim *a = wl_container_of(n, a, link);
+		if (a->node == anim->node) {
+			return true;
+		}
+		n = n->next;
+	}
+	return false;
+}
+
+static void activate_anim(struct sway_anim *anim) {
+	anim->from_x = anim->node->x;
+	anim->from_y = anim->node->y;
+	anim->queued = false;
+	clock_gettime(CLOCK_MONOTONIC, &anim->start);
+}
+
 // ── Apply / sync ────────────────────────────────────────────────────────────
 
 static void anim_apply(struct sway_anim *anim) {
@@ -147,6 +169,10 @@ static int on_anim_tick(void *data) {
 	bool running = false;
 
 	wl_list_for_each_safe(anim, tmp, &animations, link) {
+		if (anim->queued) {
+			continue;
+		}
+
 		if (anim->type == SWAY_ANIM_EASE) {
 			double elapsed = sec_since(&anim->start) * 1000.0;
 			if (elapsed >= anim->duration_ms) {
@@ -163,6 +189,14 @@ static int on_anim_tick(void *data) {
 		}
 		anim_apply(anim);
 		running = true;
+	}
+
+	// Activate queued entries whose older sibling just finished
+	wl_list_for_each_safe(anim, tmp, &animations, link) {
+		if (anim->queued && !has_older_for_node(anim)) {
+			activate_anim(anim);
+			running = true;
+		}
 	}
 
 	if (running) {
@@ -188,18 +222,7 @@ void sway_anim_move(struct wlr_scene_node *node,
 		double from_x, double from_y,
 		double to_x, double to_y,
 		struct sway_anim_config cfg) {
-	struct sway_anim *anim;
-
-	wl_list_for_each(anim, &animations, link) {
-		if (anim->node == node) {
-			// NEVER RESTART — only retarget, preserve visual position & timing
-			anim->to_x = to_x;
-			anim->to_y = to_y;
-			return;
-		}
-	}
-
-	anim = calloc(1, sizeof(*anim));
+	struct sway_anim *anim = calloc(1, sizeof(*anim));
 	if (!anim) {
 		return;
 	}
@@ -214,13 +237,18 @@ void sway_anim_move(struct wlr_scene_node *node,
 	anim->stiffness = cfg.stiffness;
 	anim->epsilon = cfg.epsilon;
 
+	// Mark queued if a non-queued entry for the same node exists
+	anim->queued = has_older_for_node(anim);
+
 	anim->node_destroy.notify = handle_node_destroy;
 	wl_signal_add(&node->events.destroy, &anim->node_destroy);
 
 	wl_list_insert(&animations, &anim->link);
 
-	clock_gettime(CLOCK_MONOTONIC, &anim->start);
-	wlr_scene_node_set_position(node, from_x, from_y);
+	if (!anim->queued) {
+		wlr_scene_node_set_position(node, from_x, from_y);
+		clock_gettime(CLOCK_MONOTONIC, &anim->start);
+	}
 
 	if (!timer) {
 		timer = wl_event_loop_add_timer(server.wl_event_loop,
@@ -250,6 +278,9 @@ void sway_anim_alpha(struct wlr_scene_node *node,
 void sway_anim_sync(void) {
 	struct sway_anim *anim;
 	wl_list_for_each(anim, &animations, link) {
+		if (anim->queued) {
+			continue;
+		}
 		anim_apply(anim);
 	}
 }

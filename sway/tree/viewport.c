@@ -155,6 +155,7 @@ void column_scroll_vert_to(struct sway_container *col,
 	col->pending.scroll_y = new_scroll_y;
 
 	if (col->content_tree) {
+		double from_y = col->content_tree->node.y;
 		struct sway_anim_config cfg = {
 			.type = SWAY_ANIM_SPRING,
 			.damping_ratio = 1.0,
@@ -162,7 +163,7 @@ void column_scroll_vert_to(struct sway_container *col,
 			.epsilon = 0.001,
 		};
 		sway_anim_move(&col->content_tree->node,
-			0, -old_scroll_y,
+			0, from_y,
 			0, -new_scroll_y,
 			cfg);
 	}

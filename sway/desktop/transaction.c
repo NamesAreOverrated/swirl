@@ -244,6 +244,8 @@ static void apply_container_state(struct sway_container *container,
 
 	if ((old.x != container->current.x || old.y != container->current.y)
 			&& container->scene_tree) {
+		double fx = container->scene_tree->node.x;
+		double fy = container->scene_tree->node.y;
 		struct sway_anim_config cfg = {
 			.type = SWAY_ANIM_SPRING,
 			.damping_ratio = 1.0,
@@ -251,7 +253,7 @@ static void apply_container_state(struct sway_container *container,
 			.epsilon = 0.001,
 		};
 		sway_anim_move(&container->scene_tree->node,
-			old.x, old.y,
+			fx, fy,
 			container->current.x, container->current.y,
 			cfg);
 	}
