@@ -254,6 +254,9 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
 		if (new_frac < 0.1) {
 			return cmd_results_new(CMD_INVALID, "Cannot resize any further");
 		}
+		if (new_frac > 1.0) {
+			return cmd_results_new(CMD_INVALID, "Cannot resize any further");
+		}
 		col->width_fraction = new_frac;
 		struct sway_workspace *ws = col->pending.workspace;
 		if (ws) {
@@ -263,11 +266,11 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
 				struct sway_prop_config cfg = {
 					.type = SWAY_ANIM_SPRING,
 					.damping_ratio = 1.0,
-					.stiffness = 800.0,
+					.stiffness = 1200.0,
 					.epsilon = 0.001,
 				};
-				sway_anim_scale(&col->scene_tree->node,
-					old_w / col->pending.width, 1.0, cfg, false);
+			sway_anim_scale(&col->scene_tree->node,
+				old_w / col->pending.width, 1.0, cfg);
 			}
 		}
 		node_set_dirty(&col->node);
@@ -275,6 +278,9 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
 		// UP/DOWN: adjust window height fraction
 		double new_frac = current->height_fraction + sign * 0.1;
 		if (new_frac < 0.1) {
+			return cmd_results_new(CMD_INVALID, "Cannot resize any further");
+		}
+		if (new_frac > 1.0) {
 			return cmd_results_new(CMD_INVALID, "Cannot resize any further");
 		}
 		current->height_fraction = new_frac;
@@ -287,11 +293,11 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
 				struct sway_prop_config cfg = {
 					.type = SWAY_ANIM_SPRING,
 					.damping_ratio = 1.0,
-					.stiffness = 800.0,
+					.stiffness = 1200.0,
 					.epsilon = 0.001,
 				};
-				sway_anim_scale(&current->scene_tree->node,
-					old_h / current->pending.height, 1.0, cfg, false);
+			sway_anim_scale(&current->scene_tree->node,
+				old_h / current->pending.height, 1.0, cfg);
 			}
 		}
 		node_set_dirty(&current->node);

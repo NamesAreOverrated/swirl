@@ -225,7 +225,7 @@ static void handle_node_destroy(struct wl_listener *listener, void *data) {
 void sway_anim_move(struct wlr_scene_node *node,
 		double from_x, double from_y,
 		double to_x, double to_y,
-		struct sway_prop_config cfg, bool reset_if_playing) {
+		struct sway_prop_config cfg) {
 	struct sway_anim *anim = anim_get_or_create(node);
 	if (!anim) {
 		return;
@@ -236,34 +236,27 @@ void sway_anim_move(struct wlr_scene_node *node,
 	anim->pos_to_x = to_x;
 	anim->pos_to_y = to_y;
 	anim->pos_cfg = cfg;
-
-	if (!anim->pos_active) {
-		anim->pos_active = true;
-		clock_gettime(CLOCK_MONOTONIC, &anim->pos_start);
-	} else if (reset_if_playing) {
-		clock_gettime(CLOCK_MONOTONIC, &anim->pos_start);
-	}
+	anim->pos_active = true;
+	clock_gettime(CLOCK_MONOTONIC, &anim->pos_start);
 }
 
 void sway_anim_scale(struct wlr_scene_node *node,
 		double from, double to,
-		struct sway_prop_config cfg, bool reset_if_playing) {
+		struct sway_prop_config cfg) {
 	(void)node;
 	(void)from;
 	(void)to;
 	(void)cfg;
-	(void)reset_if_playing;
 	// TODO: requires offscreen rendering or custom shader
 }
 
 void sway_anim_alpha(struct wlr_scene_node *node,
 		double from, double to,
-		struct sway_prop_config cfg, bool reset_if_playing) {
+		struct sway_prop_config cfg) {
 	(void)node;
 	(void)from;
 	(void)to;
 	(void)cfg;
-	(void)reset_if_playing;
 	// TODO: requires offscreen rendering or custom shader
 }
 

@@ -249,13 +249,13 @@ static void apply_container_state(struct sway_container *container,
 		struct sway_prop_config cfg = {
 			.type = SWAY_ANIM_SPRING,
 			.damping_ratio = 1.0,
-			.stiffness = 800.0,
+			.stiffness = 1200.0,
 			.epsilon = 0.001,
 		};
 		sway_anim_move(&container->scene_tree->node,
 			fx, fy,
 			container->current.x, container->current.y,
-			cfg, false);
+			cfg);
 	}
 
 	if (view) {
@@ -653,15 +653,15 @@ static void arrange_output(struct sway_output *output, int width, int height) {
 					- child->current.viewport_y;
 
 				if (old_tx != new_tx || old_ty != new_ty) {
-					struct sway_prop_config cfg = {
-						.type = SWAY_ANIM_SPRING,
-						.damping_ratio = 1.0,
-						.stiffness = 800.0,
-						.epsilon = 0.001,
-					};
-					sway_anim_move(&child->layers.tiling->node,
-						old_tx, old_ty, new_tx, new_ty,
-						cfg, false);
+				struct sway_prop_config cfg = {
+					.type = SWAY_ANIM_SPRING,
+					.damping_ratio = 1.0,
+					.stiffness = 1200.0,
+					.epsilon = 0.001,
+				};
+				sway_anim_move(&child->layers.tiling->node,
+					old_tx, old_ty, new_tx, new_ty,
+					cfg);
 				}
 
 				wlr_scene_node_set_position(&child->layers.tiling->node,

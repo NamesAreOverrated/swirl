@@ -159,13 +159,13 @@ void column_scroll_vert_to(struct sway_container *col,
 		struct sway_prop_config cfg = {
 			.type = SWAY_ANIM_SPRING,
 			.damping_ratio = 1.0,
-			.stiffness = 800.0,
+			.stiffness = 1200.0,
 			.epsilon = 0.001,
 		};
 		sway_anim_move(&col->content_tree->node,
 			0, from_y,
 			0, -new_scroll_y,
-			cfg, false);
+			cfg);
 	}
 
 	node_set_dirty(&col->node);

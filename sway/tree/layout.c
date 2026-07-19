@@ -11,19 +11,17 @@ double layout_get_default_width(struct sway_workspace *workspace) {
 }
 
 double workspace_width_fraction(struct sway_workspace *ws, double fraction) {
-	double usable = ws->width - ws->current_gaps.left - ws->current_gaps.right;
 	if (fraction >= 1.0) {
-		return usable;
+		return ws->width;
 	}
-	return fraction * (usable - ws->gaps_inner);
+	return (ws->width - ws->gaps_inner) * fraction;
 }
 
 double workspace_height_fraction(struct sway_workspace *ws, double fraction) {
-	double usable = ws->height - ws->current_gaps.top - ws->current_gaps.bottom;
 	if (fraction >= 1.0) {
-		return usable;
+		return ws->height;
 	}
-	return fraction * (usable - ws->gaps_inner);
+	return (ws->height - ws->gaps_inner) * fraction;
 }
 
 static bool col_visible(struct sway_container *col, double vp, double vp_end, int gaps) {
@@ -33,7 +31,7 @@ static bool col_visible(struct sway_container *col, double vp, double vp_end, in
 
 double workspace_get_new_column_width(struct sway_workspace *ws) {
 	double default_fraction = DEFAULT_COLUMN_WIDTH_FRACTION;
-	double usable = ws->width - ws->current_gaps.left - ws->current_gaps.right;
+	double usable = ws->width;
 	double vp = ws->viewport_x;
 	double vp_end = ws->viewport_x + usable;
 	int gaps = ws->gaps_inner;
@@ -55,8 +53,6 @@ void column_set_width_px(struct sway_container *col, double width_px) {
 	col->pending.width = width_px;
 	struct sway_workspace *ws = col->pending.workspace;
 	if (ws) {
-		double usable = ws->width - ws->current_gaps.left
-			- ws->current_gaps.right;
-		col->width_fraction = usable > 0 ? width_px / usable : 0;
+		col->width_fraction = ws->width > 0 ? width_px / ws->width : 0;
 	}
 }

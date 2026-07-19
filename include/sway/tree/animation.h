@@ -11,8 +11,8 @@
  *                properties have settled (spring) or expired (ease).
  *
  * Each animation property (pos, scale, alpha) has its own config
- * and start time.  reset_if_playing controls whether calling the
- * function again restarts that property's timer.
+ * and start time.  Calling the function again always restarts
+ * that property's timer.
  */
 
 #include <stdbool.h>
@@ -35,22 +35,21 @@ struct sway_prop_config {
 
 // Queue or retarget a position animation.
 // from_x/from_y should be the current visual position (typically node->x,y).
-// If the node already has an entry, updates pos fields only.
-// reset_if_playing: if true, restarts the pos timer.
+// If the node already has an entry, restarts the pos timer.
 void sway_anim_move(struct wlr_scene_node *node,
 	double from_x, double from_y,
 	double to_x, double to_y,
-	struct sway_prop_config cfg, bool reset_if_playing);
+	struct sway_prop_config cfg);
 
 // TODO: Queue a scale animation.  Needs offscreen rendering.
 void sway_anim_scale(struct wlr_scene_node *node,
 	double from, double to,
-	struct sway_prop_config cfg, bool reset_if_playing);
+	struct sway_prop_config cfg);
 
 // TODO: Queue an alpha animation.  Needs offscreen rendering.
 void sway_anim_alpha(struct wlr_scene_node *node,
 	double from, double to,
-	struct sway_prop_config cfg, bool reset_if_playing);
+	struct sway_prop_config cfg);
 
 // Override animated node positions after the transaction arrange pass.
 void sway_anim_sync(void);

@@ -92,8 +92,7 @@ struct cmd_results *cmd_column_release(int argc, char **argv) {
 	double col_width = workspace_get_new_column_width(ws);
 	column_set_width_px(newcol, col_width);
 	newcol->width_fraction = ws->width > 0
-		? col_width / (ws->width - ws->current_gaps.left
-			- ws->current_gaps.right)
+		? col_width / ws->width
 		: layout_get_default_width(ws);
 
 	for (int i = children->length - 1; i >= start; --i) {
