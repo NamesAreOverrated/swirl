@@ -176,6 +176,7 @@ void column_scroll_vert_to(struct sway_container *col,
 	}
 	if (!win || win == col || list_find(col->pending.children, win) == -1) {
 		col->pending.scroll_y = 0;
+		node_set_dirty(&col->node);
 		return;
 	}
 	int gaps = col->pending.workspace
@@ -185,6 +186,7 @@ void column_scroll_vert_to(struct sway_container *col,
 	col->pending.scroll_y = edge_snap_vert(win->pending.y,
 		win->pending.height,
 		col->pending.scroll_y, area_h, max_y);
+	node_set_dirty(&col->node);
 }
 
 void handle_focus_viewport(struct sway_seat *seat,

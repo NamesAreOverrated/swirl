@@ -1012,6 +1012,44 @@ void view_unmap(struct sway_view *view) {
 
 	struct sway_container *parent = view->container->pending.parent;
 	struct sway_workspace *ws = view->container->pending.workspace;
+
+	// Pre-compute the next focus
+	struct sway_container *next_focus = NULL;
+	struct sway_seat *seat = input_manager_current_seat();
+	if (parent && !parent->view && parent->pending.children) {
+		int idx = list_find(parent->pending.children, view->container);
+		int n = parent->pending.children->length;
+
+		if (n > 1) {
+			// 1. Upwards (sibling above)
+			if (idx > 0) {
+				next_focus = parent->pending.children->items[idx - 1];
+			}
+			// 2. Downwards (sibling below)
+			if (!next_focus && idx < n - 1) {
+				next_focus = parent->pending.children->items[idx + 1];
+			}
+		}
+
+		// 3. Right column's focus stack
+		if (!next_focus && ws) {
+			int col_idx = list_find(ws->tiling, parent);
+			for (int i = col_idx + 1; i < ws->tiling->length && !next_focus; ++i) {
+				struct sway_container *col = ws->tiling->items[i];
+				next_focus = seat_get_focus_inactive_view(seat, &col->node);
+			}
+		}
+
+		// 4. Left column's focus stack
+		if (!next_focus && ws) {
+			int col_idx = list_find(ws->tiling, parent);
+			for (int i = col_idx - 1; i >= 0 && !next_focus; --i) {
+				struct sway_container *col = ws->tiling->items[i];
+				next_focus = seat_get_focus_inactive_view(seat, &col->node);
+			}
+		}
+	}
+
 	container_begin_destroy(view->container);
 	if (parent) {
 		container_reap_empty(parent);
@@ -1027,7 +1065,11 @@ void view_unmap(struct sway_view *view) {
 		workspace_detect_urgent(ws);
 	}
 
-	struct sway_seat *seat;
+	// Focus the surviving sibling in the parent column
+	if (next_focus && !next_focus->node.destroying) {
+		seat_set_focus_container(seat, next_focus);
+	}
+
 	wl_list_for_each(seat, &server.input->seats, link) {
 		seat->cursor->image_surface = NULL;
 		if (seat->cursor->active_constraint) {
