@@ -300,7 +300,6 @@ static bool container_move_to_next_output(struct sway_container *container,
 // Returns true if moved
 static bool container_move_in_direction(struct sway_container *container,
 		enum wlr_direction move_dir) {
-	// If moving a fullscreen view, only consider outputs
 	switch (container->pending.fullscreen_mode) {
 	case FULLSCREEN_NONE:
 		break;
@@ -311,107 +310,41 @@ static bool container_move_in_direction(struct sway_container *container,
 		return false;
 	}
 
+	if (container_is_floating(container)) {
+		return false;
+	}
+
 	int offs =
 		move_dir == WLR_DIRECTION_LEFT || move_dir == WLR_DIRECTION_UP ? -1 : 1;
-	int index = -1;
-	int	desired = -1;
-	list_t *siblings = NULL;
-	struct sway_container *target = NULL;
 
-	// Look for a suitable ancestor of the container to move within
-	struct sway_container *ancestor = NULL;
-	struct sway_container *current = container;
-	bool wrapped = false;
-	while (!ancestor) {
-		// Don't allow containers to move out of their
-		// fullscreen or floating parent
-		if (current->pending.fullscreen_mode || container_is_floating(current)) {
-			return false;
-		}
-
-		enum sway_container_layout parent_layout = container_parent_layout(current);
-		if (!is_parallel(parent_layout, move_dir)) {
-			if (!current->pending.parent) {
-				// No parallel parent, so we reorient the workspace
-				current = workspace_wrap_children(current->pending.workspace);
-				current->pending.workspace->layout =
-					move_dir == WLR_DIRECTION_LEFT ||
-					move_dir == WLR_DIRECTION_RIGHT ?
-					L_HORIZ : L_VERT;
-				container->pending.height = container->pending.width = 0;
-				container->height_fraction = container->width_fraction = 0;
-				workspace_update_representation(current->pending.workspace);
-				wrapped = true;
-			} else {
-				// Keep looking for a parallel parent
-				current = current->pending.parent;
-			}
-			continue;
-		}
-
-		// Only scratchpad hidden containers don't have siblings
-		// so siblings != NULL here
-		siblings = container_get_siblings(current);
-		index = list_find(siblings, current);
-		desired = index + offs;
-		target = desired == -1 || desired == siblings->length ?
-				NULL : siblings->items[desired];
-
-		// If the move is simple we can complete it here early
-		if (current == container) {
-			if (target) {
-				// Container will swap with or descend into its neighbor
-				container_move_to_container_from_direction(container,
-						target, move_dir);
+	// UP/DOWN: reorder windows within the column
+	if (move_dir == WLR_DIRECTION_UP || move_dir == WLR_DIRECTION_DOWN) {
+		struct sway_container *parent = container->pending.parent;
+		if (parent && parent->pending.children) {
+			int idx = list_find(parent->pending.children, container);
+			int target = idx + offs;
+			if (target >= 0 && target < parent->pending.children->length) {
+				list_swap(parent->pending.children, idx, target);
 				return true;
-			} else if (!container->pending.parent) {
-				// Container is at workspace level so we move it to the
-				// next workspace if possible
-				return container_move_to_next_output(container,
-						current->pending.workspace->output, move_dir);
-			} else {
-				// Container has escaped its immediate parallel parent
-				current = current->pending.parent;
-				continue;
 			}
 		}
-
-		// We found a suitable ancestor, the loop will end
-		ancestor = current;
+		return false;
 	}
 
-	if (target) {
-		// Container will move in with its cousin
-		container_move_to_container_from_direction(container,
-				target, move_dir);
-		return true;
-	} else if (!wrapped && !container->pending.parent->pending.parent &&
-			container->pending.parent->pending.children->length == 1) {
-		// Treat singleton children as if they are at workspace level like i3
-		// https://github.com/i3/i3/blob/1d9160f2d247dbaa83fb62f02fd7041dec767fc2/src/move.c#L367
-		return container_move_to_next_output(container,
-				ancestor->pending.workspace->output, move_dir);
-	} else {
-		// Container will be promoted
-		struct sway_container *old_parent = container->pending.parent;
-		if (ancestor->pending.parent) {
-			// Container will move in with its parent
-			container_insert_child(ancestor->pending.parent, container,
-					index + (offs < 0 ? 0 : 1));
-		} else {
-			// Container will move to workspace level,
-			// may be re-split by workspace_layout
-			workspace_insert_tiling(ancestor->pending.workspace, container,
-					index + (offs < 0 ? 0 : 1));
+	// LEFT/RIGHT: swap the column in the workspace tiling list
+	struct sway_container *col = container_toplevel_ancestor(container);
+	struct sway_workspace *ws = col->pending.workspace;
+	if (ws) {
+		int idx = list_find(ws->tiling, col);
+		if (idx >= 0) {
+			int target = idx + offs;
+			if (target >= 0 && target < ws->tiling->length) {
+				list_swap(ws->tiling, idx, target);
+				return true;
+			}
 		}
-		ancestor->pending.height = ancestor->pending.width = 0;
-		ancestor->height_fraction = ancestor->width_fraction = 0;
-		if (old_parent) {
-			container_reap_empty(old_parent);
-		}
-		workspace_squash(container->pending.workspace);
-		return true;
 	}
+	return false;
 }
 
 static struct cmd_results *cmd_move_to_scratchpad(void);
