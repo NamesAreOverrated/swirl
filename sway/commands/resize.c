@@ -7,6 +7,7 @@
 #include <strings.h>
 #include <wlr/util/edges.h>
 #include "sway/commands.h"
+#include "sway/desktop/transaction.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
@@ -242,40 +243,31 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
 		return cmd_results_new(CMD_FAILURE, "Cannot resize a hidden scratchpad container");
 	}
 
-	if (amount->unit == MOVEMENT_UNIT_DEFAULT) {
-		amount->unit = MOVEMENT_UNIT_PPT;
-	}
-	if (amount->unit == MOVEMENT_UNIT_PPT) {
-        struct sway_container *parent = current->pending.parent;
-		float pct = amount->amount / 100.0f;
+	double sign = amount->amount > 0 ? 1.0 : -1.0;
 
-		if (is_horizontal(axis)) {
-            while (parent && parent->pending.layout != L_HORIZ) {
-                parent = parent->pending.parent;
-            }
-            if (parent) {
-                amount->amount = (float)parent->pending.width * pct;
-            } else {
-                amount->amount = (float)current->pending.workspace->width * pct;
-            }
-		} else {
-            while (parent && parent->pending.layout != L_VERT) {
-                parent = parent->pending.parent;
-            }
-            if (parent) {
-                amount->amount = (float)parent->pending.height * pct;
-            } else {
-                amount->amount = (float)current->pending.workspace->height * pct;
-            }
+	if (is_horizontal(axis)) {
+		// LEFT/RIGHT: adjust column width fraction
+		struct sway_container *col = container_toplevel_ancestor(current);
+		double new_frac = col->width_fraction + sign * 0.1;
+		if (new_frac < 0.1) {
+			return cmd_results_new(CMD_INVALID, "Cannot resize any further");
 		}
+		col->width_fraction = new_frac;
+		node_set_dirty(&col->node);
+	} else {
+		// UP/DOWN: adjust window height fraction
+		double new_frac = current->height_fraction + sign * 0.1;
+		if (new_frac < 0.1) {
+			return cmd_results_new(CMD_INVALID, "Cannot resize any further");
+		}
+		current->height_fraction = new_frac;
+		node_set_dirty(&current->node);
 	}
 
-	double old_width = current->width_fraction;
-	double old_height = current->height_fraction;
-	container_resize_tiled(current, axis, amount->amount);
-	if (current->width_fraction == old_width &&
-			current->height_fraction == old_height) {
-		return cmd_results_new(CMD_INVALID, "Cannot resize any further");
+	struct sway_workspace *ws = current->pending.workspace;
+	if (ws) {
+		arrange_workspace(ws);
+		transaction_commit_dirty();
 	}
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }

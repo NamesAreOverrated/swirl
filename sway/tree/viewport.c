@@ -111,11 +111,17 @@ void viewport_arrange_windows(struct sway_container *col) {
 	for (int i = 0; i < col->pending.children->length; ++i) {
 		struct sway_container *child = col->pending.children->items[i];
 
+		double child_h = round(child->height_fraction
+			* col->pending.height);
+		if (child_h < 10) {
+			child_h = 10;
+		}
+
 		child->pending.x = 0;
 		child->pending.y = y;
 		child->pending.width = col->pending.width;
-
-		y += child->pending.height + gap;
+		child->pending.height = child_h;
+		y += child_h + gap;
 		node_set_dirty(&child->node);
 
 		if (child->view) {
