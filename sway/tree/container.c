@@ -59,11 +59,8 @@ struct sway_container *container_create(struct sway_view *view) {
 	//     - title text
 	//     - marks text
 	//   - border
-	//     - border top/bottom/left/right
-	//     - content_tree (we put the content node here so when we disable the
-	//       border everything gets disabled. We only render the content iff there
-	//       is a border as well)
-	//     - buffer used for output enter/leave events for foreign_toplevel
+	//     - border top/bottom/left/right (view containers only)
+	//     - content_tree
 	bool failed = false;
 	c->scene_tree = alloc_scene_tree(root->staging, &failed);
 
@@ -71,9 +68,6 @@ struct sway_container *container_create(struct sway_view *view) {
 	c->title_bar.border = alloc_scene_tree(c->title_bar.tree, &failed);
 	c->title_bar.background = alloc_scene_tree(c->title_bar.tree, &failed);
 
-	// for opacity purposes we need to carfully create the scene such that
-	// none of our rect nodes as well as text buffers don't overlap. To do
-	// this we have to create rects such that they go around text buffers
 	for (int i = 0; i < 4; i++) {
 		alloc_rect_node(c->title_bar.border, &failed);
 	}

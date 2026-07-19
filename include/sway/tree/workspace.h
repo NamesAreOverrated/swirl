@@ -21,6 +21,7 @@ struct sway_workspace_state {
 
 	struct sway_container *focused_inactive_child;
 	bool focused;
+	double viewport_x, viewport_y;
 };
 
 struct sway_workspace {
@@ -50,6 +51,8 @@ struct sway_workspace {
 	list_t *tiling;             // struct sway_container
 	list_t *output_priority;
 	bool urgent;
+
+	double viewport_x, viewport_y;
 
 	struct sway_workspace_state current;
 	struct wlr_ext_workspace_handle_v1 *ext_workspace; // Always set.

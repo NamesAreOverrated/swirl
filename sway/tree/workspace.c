@@ -17,6 +17,7 @@
 #include "sway/server.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
+#include "sway/tree/layout.h"
 #include "sway/tree/node.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
@@ -216,11 +217,13 @@ struct sway_workspace *workspace_create(struct sway_output *output,
 
 	ws->name = strdup(name);
 	ws->prev_split_layout = L_NONE;
-	ws->layout = output_get_default_layout(output);
+	ws->layout = L_HORIZ;
 	ws->floating = create_list();
 	ws->tiling = create_list();
 	ws->output_priority = create_list();
 
+	ws->viewport_x = 0;
+	ws->viewport_y = 0;
 	ws->gaps_outer = config->gaps_outer;
 	ws->gaps_inner = config->gaps_inner;
 	if (name) {
@@ -945,8 +948,13 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 			container_reap_empty(old_parent);
 		}
 	}
-	if (config->default_layout != L_NONE) {
-		con = container_split(con, config->default_layout);
+	if (con->view) {
+		struct sway_container *col = container_create(NULL);
+		col->pending.layout = L_VERT;
+		container_add_child(col, con);
+		col->width_fraction = layout_get_default_width(workspace);
+		con->height_fraction = 1.0;
+		con = col;
 	}
 	list_add(workspace->tiling, con);
 	con->pending.workspace = workspace;
@@ -987,8 +995,13 @@ struct sway_container *workspace_insert_tiling(struct sway_workspace *workspace,
 	if (con->pending.workspace) {
 		container_detach(con);
 	}
-	if (config->default_layout != L_NONE) {
-		con = container_split(con, config->default_layout);
+	if (con->view) {
+		struct sway_container *col = container_create(NULL);
+		col->pending.layout = L_VERT;
+		container_add_child(col, con);
+		col->width_fraction = layout_get_default_width(workspace);
+		con->height_fraction = 1.0;
+		con = col;
 	}
 	workspace_insert_tiling_direct(workspace, con, index);
 	return con;

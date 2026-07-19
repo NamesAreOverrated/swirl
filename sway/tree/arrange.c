@@ -5,7 +5,11 @@
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include "sway/tree/arrange.h"
+#include "sway/tree/column.h"
 #include "sway/tree/container.h"
+#include "sway/tree/layout.h"
+#include "sway/tree/viewport.h"
+#include "sway/input/seat.h"
 #include "sway/output.h"
 #include "sway/tree/workspace.h"
 #include "sway/tree/view.h"
@@ -255,6 +259,13 @@ void arrange_container(struct sway_container *container) {
 		node_set_dirty(&container->node);
 		return;
 	}
+	// Columns (L_VERT, no parent, workspace children) use column layout
+	if (!container->pending.parent && container->pending.workspace
+			&& container->pending.layout == L_VERT) {
+		viewport_arrange_windows(container);
+		node_set_dirty(&container->node);
+		return;
+	}
 	struct wlr_box box;
 	container_get_box(container, &box);
 	arrange_children(container->pending.children, container->pending.layout, &box);
@@ -317,7 +328,28 @@ void arrange_workspace(struct sway_workspace *workspace) {
 	} else {
 		struct wlr_box box;
 		workspace_get_box(workspace, &box);
-		arrange_children(workspace->tiling, workspace->layout, &box);
+
+		// Column layout — replaces standard arrange_children for tiling
+		workspace_arrange_columns(workspace, &box);
+
+		struct sway_seat *seat = input_manager_current_seat();
+		struct sway_container *focus =
+			seat_get_focus_inactive_tiling(seat, workspace);
+		while (focus && focus->pending.parent) {
+			focus = focus->pending.parent;
+		}
+		if (focus && workspace_is_visible(workspace)) {
+			viewport_compute_offset(workspace, focus,
+				box.width, box.height);
+
+			struct sway_container *focused_win =
+				seat_get_focus_inactive_view(seat, &focus->node);
+			column_scroll_vert_to(focus, focused_win, box.height);
+		} else {
+			workspace->viewport_x = 0;
+			workspace->viewport_y = 0;
+		}
+
 		arrange_floating(workspace->floating);
 	}
 }

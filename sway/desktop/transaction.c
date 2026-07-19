@@ -134,6 +134,9 @@ static void copy_workspace_state(struct sway_workspace *ws,
 		}
 	}
 	state->focused_inactive_child = focus;
+
+	state->viewport_x = ws->viewport_x;
+	state->viewport_y = ws->viewport_y;
 }
 
 static void copy_container_state(struct sway_container *container,
@@ -551,9 +554,22 @@ static void arrange_workspace_floating(struct sway_workspace *ws) {
 
 static void arrange_workspace_tiling(struct sway_workspace *ws,
 		int width, int height) {
-	arrange_children(ws->current.layout, ws->current.tiling,
-		ws->current.focused_inactive_child, ws->layers.tiling,
-		width, height, ws->gaps_inner);
+	for (int i = 0; i < ws->current.tiling->length; i++) {
+		struct sway_container *col = ws->current.tiling->items[i];
+
+		wlr_scene_node_set_position(&col->scene_tree->node,
+			col->current.x, col->current.y);
+		wlr_scene_node_reparent(&col->scene_tree->node, ws->layers.tiling);
+		wlr_scene_node_set_enabled(&col->scene_tree->node, true);
+
+		if (!col->view && col->current.children
+				&& col->current.children->length > 0) {
+			arrange_container(col, col->current.width,
+				col->current.height, false, ws->gaps_inner);
+			wlr_scene_node_set_position(&col->content_tree->node,
+				0, -col->current.scroll_y);
+		}
+	}
 }
 
 static void disable_workspace(struct sway_workspace *ws) {
@@ -612,7 +628,8 @@ static void arrange_output(struct sway_output *output, int width, int height) {
 				struct side_gaps *gaps = &child->current_gaps;
 
 				wlr_scene_node_set_position(&child->layers.tiling->node,
-					gaps->left + area->x, gaps->top + area->y);
+					gaps->left + area->x - child->current.viewport_x,
+					gaps->top + area->y - child->current.viewport_y);
 
 				arrange_workspace_tiling(child,
 					area->width - gaps->left - gaps->right,

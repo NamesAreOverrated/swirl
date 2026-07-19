@@ -63,6 +63,9 @@ struct sway_container_state {
 	// These are in layout coordinates.
 	double content_x, content_y;
 	double content_width, content_height;
+
+	// Column scroll offset (non-view containers only)
+	double scroll_y;
 };
 
 struct sway_container {

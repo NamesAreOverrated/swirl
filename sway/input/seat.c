@@ -31,8 +31,8 @@
 #include "sway/server.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
-#include "sway/tree/root.h"
 #include "sway/tree/view.h"
+#include "sway/tree/viewport.h"
 #include "sway/tree/workspace.h"
 
 static void seat_device_destroy(struct sway_seat_device *seat_device) {
@@ -1246,9 +1246,11 @@ static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *n
 	seat->has_focus = true;
 
 	if (config->smart_gaps && new_workspace) {
-		// When smart gaps is on, gaps may change when the focus changes so
-		// the workspace needs to be arranged
 		arrange_workspace(new_workspace);
+	}
+
+	if (container) {
+		handle_focus_viewport(seat, container);
 	}
 }
 

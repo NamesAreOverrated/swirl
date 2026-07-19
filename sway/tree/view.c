@@ -31,7 +31,9 @@
 #include "sway/server.h"
 #include "sway/sway_text_node.h"
 #include "sway/tree/arrange.h"
+#include "sway/tree/column.h"
 #include "sway/tree/container.h"
+#include "sway/tree/layout.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
 #include "sway/config.h"
@@ -895,7 +897,26 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 			&view->foreign_destroy);
 
 	struct sway_container *container = view->container;
-	if (target_sibling) {
+	if (!fullscreen && ws) {
+		// Wrap in a column for column-based tiling
+		struct sway_container *col = container_create(NULL);
+		col->pending.workspace = ws;
+		col->pending.layout = L_VERT;
+
+		container_add_child(col, container);
+		column_set_width_px(col, workspace_get_new_column_width(ws));
+		col->width_fraction = ws->width > 0
+			? col->pending.width
+				/ (ws->width - ws->current_gaps.left
+					- ws->current_gaps.right)
+			: layout_get_default_width(ws);
+
+		container->pending.height = workspace_height_fraction(ws, 1.0);
+		container->height_fraction = 1.0;
+
+		list_add(ws->tiling, col);
+		container = col;
+	} else if (target_sibling) {
 		container_add_sibling(target_sibling, container, 1);
 	} else if (ws) {
 		container = workspace_add_tiling(ws, container);
