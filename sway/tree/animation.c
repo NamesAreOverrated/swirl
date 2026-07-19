@@ -8,51 +8,12 @@
 #include "sway/server.h"
 #include "sway/tree/animation.h"
 
-/*
- * DATA-DRIVEN  -> operates on wlr_scene_node *, knows nothing about sway types
- * NEVER RESTART -> existing animation only updates to_x/to_y, no snap
- * NEVER CANCEL  -> no cancel API, always runs to completion
- */
-
-struct sway_anim {
-	struct wl_list link;
-	struct wlr_scene_node *node;
-	enum sway_anim_type type;
-	bool queued;
-
-	double from_x, from_y, to_x, to_y;
-
-	bool scale_active;
-	double from_scale, to_scale;
-
-	bool alpha_active;
-	double from_alpha, to_alpha;
-
-	int duration_ms;
-
-	double damping_ratio;
-	double stiffness;
-	double epsilon;
-
-	struct timespec start;
-
-	void (*on_done)(void *data);
-	void *data;
-
-	struct wl_listener node_destroy;
-};
-
-static struct wl_list animations;
-static struct wl_event_source *timer;
-
-// ── Easing curves ───────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 static double ease_out_cubic(double t) {
 	double m = t - 1.0;
 	return m * m * m + 1.0;
 }
-
-// ── Spring math ─────────────────────────────────────────────────────────────
 
 static double spring_value_at(double t, double zeta, double k) {
 	double w0 = sqrt(k);
@@ -96,8 +57,6 @@ static bool spring_is_settled(double t, double zeta, double k, double eps) {
 		&& fabs(spring_vel_at(t, zeta, k)) < eps;
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
 static double sec_since(struct timespec *start) {
 	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
@@ -109,58 +68,113 @@ static double lerp(double a, double b, double t) {
 	return a + (b - a) * t;
 }
 
-// True if a newer entry for the same node is closer to the tail (prev).
-// Oldest entry is active; all newer ones are queued behind it.
-static bool has_older_for_node(struct sway_anim *anim) {
-	struct wl_list *n = anim->link.next;
-	while (n != &animations) {
-		struct sway_anim *a = wl_container_of(n, a, link);
-		if (a->node == anim->node) {
-			return true;
-		}
-		n = n->next;
+// ── Per-property interpolation ─────────────────────────────────────────────
+
+static bool prop_done(struct timespec *start, struct sway_prop_config *cfg) {
+	if (cfg->type == SWAY_ANIM_EASE) {
+		double elapsed_ms = sec_since(start) * 1000.0;
+		return elapsed_ms >= cfg->duration_ms;
 	}
-	return false;
+	double t = sec_since(start);
+	return spring_is_settled(t, cfg->damping_ratio,
+		cfg->stiffness, cfg->epsilon);
 }
 
-static void activate_anim(struct sway_anim *anim) {
-	anim->from_x = anim->node->x;
-	anim->from_y = anim->node->y;
-	anim->queued = false;
-	clock_gettime(CLOCK_MONOTONIC, &anim->start);
+static double prop_interp(struct timespec *start, struct sway_prop_config *cfg) {
+	if (cfg->type == SWAY_ANIM_EASE) {
+		double elapsed = sec_since(start) * 1000.0;
+		double t = fmin(elapsed / cfg->duration_ms, 1.0);
+		return ease_out_cubic(t);
+	}
+	double t = sec_since(start);
+	return fmax(spring_value_at(t, cfg->damping_ratio,
+		cfg->stiffness), 0.0);
+}
+
+// ── Core data structures ────────────────────────────────────────────────────
+
+struct sway_anim {
+	struct wl_list link;
+	struct wlr_scene_node *node;
+	struct wl_listener node_destroy;
+
+	bool pos_active;
+	struct sway_prop_config pos_cfg;
+	double pos_from_x, pos_from_y, pos_to_x, pos_to_y;
+	struct timespec pos_start;
+
+	bool scale_active;
+	struct sway_prop_config scale_cfg;
+	double scale_from, scale_to;
+	struct timespec scale_start;
+
+	bool alpha_active;
+	struct sway_prop_config alpha_cfg;
+	double alpha_from, alpha_to;
+	struct timespec alpha_start;
+};
+
+static struct wl_list animations;
+static struct wl_event_source *timer;
+
+// ── Forward declarations ────────────────────────────────────────────────────
+
+static void finish_anim(struct sway_anim *anim);
+static int on_anim_tick(void *data);
+static void handle_node_destroy(struct wl_listener *listener, void *data);
+
+// ── Find or create ──────────────────────────────────────────────────────────
+
+static struct sway_anim *anim_get_or_create(struct wlr_scene_node *node) {
+	struct sway_anim *anim;
+	wl_list_for_each(anim, &animations, link) {
+		if (anim->node == node) {
+			return anim;
+		}
+	}
+	anim = calloc(1, sizeof(*anim));
+	if (!anim) {
+		return NULL;
+	}
+	anim->node = node;
+	wl_list_insert(&animations, &anim->link);
+	anim->node_destroy.notify = handle_node_destroy;
+	wl_signal_add(&node->events.destroy, &anim->node_destroy);
+	if (!timer) {
+		timer = wl_event_loop_add_timer(server.wl_event_loop,
+			on_anim_tick, NULL);
+		wl_event_source_timer_update(timer, 1);
+	}
+	return anim;
 }
 
 // ── Apply / sync ────────────────────────────────────────────────────────────
 
-static void anim_apply(struct sway_anim *anim) {
-	double v;
-
-	if (anim->type == SWAY_ANIM_EASE) {
-		double elapsed = sec_since(&anim->start) * 1000.0;
-		double t = elapsed / anim->duration_ms;
-		t = fmin(t, 1.0);
-		v = ease_out_cubic(t);
-	} else {
-		double t = sec_since(&anim->start);
-		v = fmax(spring_value_at(t, anim->damping_ratio,
-			anim->stiffness), 0.0);
-	}
-
-	double x = lerp(anim->from_x, anim->to_x, v);
-	double y = lerp(anim->from_y, anim->to_y, v);
+static void anim_apply_pos(struct sway_anim *anim) {
+	double v = prop_interp(&anim->pos_start, &anim->pos_cfg);
+	double x = lerp(anim->pos_from_x, anim->pos_to_x, v);
+	double y = lerp(anim->pos_from_y, anim->pos_to_y, v);
 	wlr_scene_node_set_position(anim->node, x, y);
+}
+
+void sway_anim_sync(void) {
+	struct sway_anim *anim;
+	wl_list_for_each(anim, &animations, link) {
+		if (anim->pos_active) {
+			anim_apply_pos(anim);
+		}
+	}
 }
 
 // ── Timer ───────────────────────────────────────────────────────────────────
 
 static void finish_anim(struct sway_anim *anim) {
-	wlr_scene_node_set_position(anim->node,
-		anim->to_x, anim->to_y);
+	if (anim->pos_active) {
+		wlr_scene_node_set_position(anim->node,
+			anim->pos_to_x, anim->pos_to_y);
+	}
 	wl_list_remove(&anim->link);
 	wl_list_remove(&anim->node_destroy.link);
-	if (anim->on_done) {
-		anim->on_done(anim->data);
-	}
 	free(anim);
 }
 
@@ -169,41 +183,31 @@ static int on_anim_tick(void *data) {
 	bool running = false;
 
 	wl_list_for_each_safe(anim, tmp, &animations, link) {
-		if (anim->queued) {
-			continue;
+		bool all_done = true;
+
+		if (anim->pos_active) {
+			if (prop_done(&anim->pos_start, &anim->pos_cfg)) {
+				wlr_scene_node_set_position(anim->node,
+					anim->pos_to_x, anim->pos_to_y);
+				anim->pos_active = false;
+			} else {
+				anim_apply_pos(anim);
+				all_done = false;
+			}
 		}
 
-		if (anim->type == SWAY_ANIM_EASE) {
-			double elapsed = sec_since(&anim->start) * 1000.0;
-			if (elapsed >= anim->duration_ms) {
-				finish_anim(anim);
-				continue;
-			}
+		if (all_done) {
+			finish_anim(anim);
 		} else {
-			double t = sec_since(&anim->start);
-			if (spring_is_settled(t, anim->damping_ratio,
-					anim->stiffness, anim->epsilon)) {
-				finish_anim(anim);
-				continue;
-			}
-		}
-		anim_apply(anim);
-		running = true;
-	}
-
-	// Activate queued entries whose older sibling just finished
-	wl_list_for_each_safe(anim, tmp, &animations, link) {
-		if (anim->queued && !has_older_for_node(anim)) {
-			activate_anim(anim);
 			running = true;
 		}
 	}
 
 	if (running) {
 		wl_event_source_timer_update(timer, 16);
-		return 0;
+	} else {
+		timer = NULL;
 	}
-	timer = NULL;
 	return 0;
 }
 
@@ -221,68 +225,46 @@ static void handle_node_destroy(struct wl_listener *listener, void *data) {
 void sway_anim_move(struct wlr_scene_node *node,
 		double from_x, double from_y,
 		double to_x, double to_y,
-		struct sway_anim_config cfg) {
-	struct sway_anim *anim = calloc(1, sizeof(*anim));
+		struct sway_prop_config cfg, bool reset_if_playing) {
+	struct sway_anim *anim = anim_get_or_create(node);
 	if (!anim) {
 		return;
 	}
-	anim->node = node;
-	anim->type = cfg.type;
-	anim->from_x = from_x;
-	anim->from_y = from_y;
-	anim->to_x = to_x;
-	anim->to_y = to_y;
-	anim->duration_ms = cfg.duration_ms;
-	anim->damping_ratio = cfg.damping_ratio;
-	anim->stiffness = cfg.stiffness;
-	anim->epsilon = cfg.epsilon;
 
-	anim->node_destroy.notify = handle_node_destroy;
-	wl_signal_add(&node->events.destroy, &anim->node_destroy);
+	anim->pos_from_x = from_x;
+	anim->pos_from_y = from_y;
+	anim->pos_to_x = to_x;
+	anim->pos_to_y = to_y;
+	anim->pos_cfg = cfg;
 
-	wl_list_insert(&animations, &anim->link);
-
-	// Mark queued if a non-queued entry for the same node exists
-	anim->queued = has_older_for_node(anim);
-
-	if (!anim->queued) {
-		wlr_scene_node_set_position(node, from_x, from_y);
-		clock_gettime(CLOCK_MONOTONIC, &anim->start);
-	}
-
-	if (!timer) {
-		timer = wl_event_loop_add_timer(server.wl_event_loop,
-			on_anim_tick, NULL);
-		wl_event_source_timer_update(timer, 1);
+	if (!anim->pos_active) {
+		anim->pos_active = true;
+		clock_gettime(CLOCK_MONOTONIC, &anim->pos_start);
+	} else if (reset_if_playing) {
+		clock_gettime(CLOCK_MONOTONIC, &anim->pos_start);
 	}
 }
 
 void sway_anim_scale(struct wlr_scene_node *node,
-		double from, double to, struct sway_anim_config cfg) {
+		double from, double to,
+		struct sway_prop_config cfg, bool reset_if_playing) {
 	(void)node;
 	(void)from;
 	(void)to;
 	(void)cfg;
+	(void)reset_if_playing;
 	// TODO: requires offscreen rendering or custom shader
 }
 
 void sway_anim_alpha(struct wlr_scene_node *node,
-		double from, double to, struct sway_anim_config cfg) {
+		double from, double to,
+		struct sway_prop_config cfg, bool reset_if_playing) {
 	(void)node;
 	(void)from;
 	(void)to;
 	(void)cfg;
+	(void)reset_if_playing;
 	// TODO: requires offscreen rendering or custom shader
-}
-
-void sway_anim_sync(void) {
-	struct sway_anim *anim;
-	wl_list_for_each(anim, &animations, link) {
-		if (anim->queued) {
-			continue;
-		}
-		anim_apply(anim);
-	}
 }
 
 void sway_anim_init(struct wl_event_loop *loop) {
