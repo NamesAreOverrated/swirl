@@ -16,6 +16,7 @@
 #include "sway/output.h"
 #include "sway/server.h"
 #include "sway/tree/arrange.h"
+#include "sway/tree/column.h"
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"
 #include "sway/tree/node.h"
@@ -950,13 +951,34 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 	}
 	if (con->view) {
 		struct sway_container *col = container_create(NULL);
+		col->pending.workspace = workspace;
 		col->pending.layout = L_VERT;
 		container_add_child(col, con);
-		col->width_fraction = layout_get_default_width(workspace);
+
+		double col_w = workspace_get_new_column_width(workspace);
+		column_set_width_px(col, col_w);
+
+		con->pending.height = workspace_height_fraction(workspace, 1.0);
 		con->height_fraction = 1.0;
+
 		con = col;
 	}
-	list_add(workspace->tiling, con);
+
+	// Insert after the focused column
+	struct sway_seat *seat = input_manager_current_seat();
+	struct sway_node *node = seat_get_focus_inactive(seat, &workspace->node);
+	int idx = workspace->tiling->length;
+	if (node && node->type == N_CONTAINER
+			&& !container_is_floating_or_child(node->sway_container)) {
+		struct sway_container *focus_col =
+			container_toplevel_ancestor(node->sway_container);
+		int found = list_find(workspace->tiling, focus_col);
+		if (found >= 0) {
+			idx = found + 1;
+		}
+	}
+	list_insert(workspace->tiling, idx, con);
+
 	con->pending.workspace = workspace;
 	container_for_each_child(con, set_workspace, NULL);
 	container_handle_fullscreen_reparent(con);

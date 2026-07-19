@@ -848,30 +848,6 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 		wlr_surface_set_preferred_buffer_scale(wlr_surface, ceil(scale));
 	}
 
-	struct sway_seat *seat = input_manager_current_seat();
-	struct sway_node *node =
-		seat_get_focus_inactive(seat, ws ? &ws->node : &root->node);
-	struct sway_container *target_sibling = NULL;
-	if (node && node->type == N_CONTAINER) {
-		if (container_is_floating(node->sway_container)) {
-			// If we're about to launch the view into the floating container, then
-			// launch it as a tiled view instead.
-			if (ws) {
-				target_sibling = seat_get_focus_inactive_tiling(seat, ws);
-				if (target_sibling) {
-					struct sway_container *con =
-						seat_get_focus_inactive_view(seat, &target_sibling->node);
-					if (con)  {
-						target_sibling = con;
-					}
-				}
-			} else {
-				ws = seat_get_last_known_workspace(seat);
-			}
-		} else {
-			target_sibling = node->sway_container;
-		}
-	}
 
 	struct wlr_ext_foreign_toplevel_handle_v1_state foreign_toplevel_state = {
 		.app_id = view_get_app_id(view),
@@ -897,28 +873,7 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 			&view->foreign_destroy);
 
 	struct sway_container *container = view->container;
-	if (!fullscreen && ws) {
-		// Wrap in a column for column-based tiling
-		struct sway_container *col = container_create(NULL);
-		col->pending.workspace = ws;
-		col->pending.layout = L_VERT;
-
-		container_add_child(col, container);
-		column_set_width_px(col, workspace_get_new_column_width(ws));
-		col->width_fraction = ws->width > 0
-			? col->pending.width
-				/ (ws->width - ws->current_gaps.left
-					- ws->current_gaps.right)
-			: layout_get_default_width(ws);
-
-		container->pending.height = workspace_height_fraction(ws, 1.0);
-		container->height_fraction = 1.0;
-
-		list_add(ws->tiling, col);
-		container = col;
-	} else if (target_sibling) {
-		container_add_sibling(target_sibling, container, 1);
-	} else if (ws) {
+	if (ws) {
 		container = workspace_add_tiling(ws, container);
 	}
 	ipc_event_window(view->container, "new");
