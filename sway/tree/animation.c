@@ -237,13 +237,13 @@ void sway_anim_move(struct wlr_scene_node *node,
 	anim->stiffness = cfg.stiffness;
 	anim->epsilon = cfg.epsilon;
 
-	// Mark queued if a non-queued entry for the same node exists
-	anim->queued = has_older_for_node(anim);
-
 	anim->node_destroy.notify = handle_node_destroy;
 	wl_signal_add(&node->events.destroy, &anim->node_destroy);
 
 	wl_list_insert(&animations, &anim->link);
+
+	// Mark queued if a non-queued entry for the same node exists
+	anim->queued = has_older_for_node(anim);
 
 	if (!anim->queued) {
 		wlr_scene_node_set_position(node, from_x, from_y);
