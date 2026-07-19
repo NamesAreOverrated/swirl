@@ -78,8 +78,6 @@ struct cmd_results *cmd_column_release(int argc, char **argv) {
 	int start;
 	if (split_idx >= 0 && split_idx < children->length - 1) {
 		start = split_idx + 1;
-	} else if (children->length > 1) {
-		start = children->length - 1;
 	} else {
 		return cmd_results_new(CMD_SUCCESS, NULL);
 	}
