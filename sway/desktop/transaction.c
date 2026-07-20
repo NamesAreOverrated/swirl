@@ -451,11 +451,30 @@ static void arrange_container(struct sway_container *con, int width, int height,
       sway_assert(false, "unreachable");
     }
 
-    if (con->border.vfx) {
-      wlr_scene_vfx_set_size(con->border.vfx, width, height);
-    }
-
     int border_left = con->current.border_left ? border_width : 0;
+
+    if (con->border.vfx) {
+      wlr_scene_node_set_position(&con->border.vfx->node, 0, 0);
+      wlr_scene_vfx_set_size(con->border.vfx, width, height);
+
+      struct wlr_scene_node_vfx vfx = {0};
+      if (con->border.vfx->node.vfx != NULL) {
+        vfx = *con->border.vfx->node.vfx;
+      }
+      vfx.border.thickness[0] = border_top;
+      vfx.border.thickness[1] = con->current.border_right ? border_width : 0;
+      vfx.border.thickness[2] = con->current.border_bottom ? border_width : 0;
+      vfx.border.thickness[3] = border_left;
+      float r = config->corner_radius;
+      if (border_top == 0 && border_width == 0) {
+        r = 0;
+      }
+      vfx.corner_radius[0] = r;
+      vfx.corner_radius[1] = r;
+      vfx.corner_radius[2] = r;
+      vfx.corner_radius[3] = r;
+      wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
+    }
 
     // make sure to reparent, it's possible that the client just came out of
     // fullscreen mode where the parent of the surface is not the container

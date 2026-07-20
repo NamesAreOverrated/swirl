@@ -629,7 +629,40 @@ The meson build system picks up whatever is on disk. Rebuilding after
 wlroots changes requires recompiling wlroots, but ninja handles this
 automatically.
 
-### 6. `WL_OUTPUT_TRANSFORM_FLIPPED_180` projection matrix
+### 7. HiDPI border/inner rect coordinate-space mismatch
+
+The VFX shader's `pos` and `size` are in **buffer coordinates** (after scaling
+by output scale via `transform_output_box`), but `u_border_thickness`,
+`u_corner_radius`, and `u_inner_corner_radius` are in **logical pixels** (never
+scaled). On HiDPI displays (scale > 1), the inner rect's position and size in the
+shader are smaller than the content area, leaving a visible gap that scales with
+border width × (scale − 1).
+
+**Initial fix:** Multiply thickness and radius values by `data->scale` in
+`scene_entry_render()` before passing them to `wlr_render_rect_options`.
+
+**Precision fix (sub-pixel gaps remain):** The content node's buffer position is
+computed by `transform_output_box()` using `round(logical_pos × scale)`, but the
+VFX inner rect offset was `border_thickness × scale` (raw, unrounded). At
+non-integer scene positions or when `border_thickness × scale` has a fractional
+part that rounds differently from the content position, a ±1 pixel gap appears.
+
+**Final fix:** Compute each buffer-precise border offset using `roundf()` to
+match the content's rounding exactly:
+
+```c
+bt_left = roundf((x_rel + left_logical) × s) - roundf(x_rel × s);
+bt_top  = roundf((y_rel + top_logical) × s) - roundf(y_rel × s);
+// right side: offset from VFX right edge
+bt_right = roundf((x_rel + vw) × s) - roundf((x_rel + vw - right_logical) × s);
+// bottom side: offset from VFX bottom edge
+bt_bottom = roundf((y_rel + vh) × s) - roundf((y_rel + vh - bottom_logical) × s);
+```
+
+This ensures `inner_pos = (gl_FragCoord.xy − u_box.xy) − bt` lands exactly at
+the content's buffer origin, eliminating all sub-pixel gaps.
+
+### 8. `WL_OUTPUT_TRANSFORM_FLIPPED_180` projection matrix
 
 The GLES2 render pass creates its projection matrix with
 `WL_OUTPUT_TRANSFORM_FLIPPED_180`, not `WL_OUTPUT_TRANSFORM_NORMAL`:

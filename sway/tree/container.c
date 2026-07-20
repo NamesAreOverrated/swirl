@@ -196,21 +196,28 @@ void container_update(struct sway_container *con) {
 
 	if (con->view && con->border.vfx) {
 		struct wlr_scene_node_vfx vfx = {0};
-		vfx.border.thickness[0] = con->current.border_top ? con->current.border_thickness : 0;
-		vfx.border.thickness[1] = con->current.border_right ? con->current.border_thickness : 0;
-		vfx.border.thickness[2] = con->current.border_bottom ? con->current.border_thickness : 0;
-		vfx.border.thickness[3] = con->current.border_left ? con->current.border_thickness : 0;
+		if (con->border.vfx->node.vfx != NULL) {
+			vfx = *con->border.vfx->node.vfx;
+		}
+		float r = config->corner_radius;
+
 		vfx.border.color[0] = colors->child_border[0] * colors->child_border[3] * alpha;
 		vfx.border.color[1] = colors->child_border[1] * colors->child_border[3] * alpha;
 		vfx.border.color[2] = colors->child_border[2] * colors->child_border[3] * alpha;
 		vfx.border.color[3] = colors->child_border[3] * alpha;
-		float r = config->corner_radius;
 		vfx.corner_radius[0] = r;
 		vfx.corner_radius[1] = r;
 		vfx.corner_radius[2] = r;
 		vfx.corner_radius[3] = r;
+		// Square inner edge matches the square content area
+		vfx.inner_corner_radius[0] = 0;
+		vfx.inner_corner_radius[1] = 0;
+		vfx.inner_corner_radius[2] = 0;
+		vfx.inner_corner_radius[3] = 0;
 		wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
 	}
+
+
 
 	if (con->title_bar.title_text) {
 		sway_text_node_set_color(con->title_bar.title_text, colors->text);
