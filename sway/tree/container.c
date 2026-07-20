@@ -59,7 +59,7 @@ struct sway_container *container_create(struct sway_view *view) {
 	//     - title text
 	//     - marks text
 	//   - border
-	//     - border top/bottom/left/right (view containers only)
+	//     - vfx (view containers only, shader draws border + shadow)
 	//     - content_tree
 	bool failed = false;
 	c->scene_tree = alloc_scene_tree(root->staging, &failed);
@@ -80,11 +80,10 @@ struct sway_container *container_create(struct sway_view *view) {
 	c->content_tree = alloc_scene_tree(c->border.tree, &failed);
 
 	if (view) {
-		// only containers with views can have borders
-		c->border.top = alloc_rect_node(c->border.tree, &failed);
-		c->border.bottom = alloc_rect_node(c->border.tree, &failed);
-		c->border.left = alloc_rect_node(c->border.tree, &failed);
-		c->border.right = alloc_rect_node(c->border.tree, &failed);
+		c->border.vfx = wlr_scene_vfx_create(c->border.tree, 0, 0);
+		if (!c->border.vfx) {
+			failed = true;
+		}
 	}
 
 	if (!failed && !scene_descriptor_assign(&c->scene_tree->node,
@@ -167,17 +166,6 @@ static struct border_colors *container_get_current_colors(
 	return colors;
 }
 
-static bool container_is_current_floating(struct sway_container *container) {
-	if (!container->current.parent && container->current.workspace &&
-			list_find(container->current.workspace->floating, container) != -1) {
-		return true;
-	}
-	if (container->scratchpad) {
-		return true;
-	}
-	return false;
-}
-
 // scene rect wants premultiplied colors
 static void scene_rect_set_color(struct wlr_scene_rect *rect,
 		const float color[4], float opacity) {
@@ -193,29 +181,7 @@ static void scene_rect_set_color(struct wlr_scene_rect *rect,
 
 void container_update(struct sway_container *con) {
 	struct border_colors *colors = container_get_current_colors(con);
-	list_t *siblings = NULL;
-	enum sway_container_layout layout = L_NONE;
 	float alpha = con->alpha;
-
-	if (con->current.parent) {
-		siblings = con->current.parent->current.children;
-		layout = con->current.parent->current.layout;
-	} else if (con->current.workspace) {
-		siblings = con->current.workspace->current.tiling;
-		layout = con->current.workspace->current.layout;
-	}
-
-	float bottom[4], right[4];
-	memcpy(bottom, colors->child_border, sizeof(bottom));
-	memcpy(right, colors->child_border, sizeof(right));
-
-	if (!container_is_current_floating(con) && siblings && siblings->length == 1) {
-		if (layout == L_HORIZ) {
-			memcpy(right, colors->indicator, sizeof(right));
-		} else if (layout == L_VERT) {
-			memcpy(bottom, colors->indicator, sizeof(bottom));
-		}
-	}
 
 	struct wlr_scene_node *node;
 	wl_list_for_each(node, &con->title_bar.border->children, link) {
@@ -228,11 +194,17 @@ void container_update(struct sway_container *con) {
 		scene_rect_set_color(rect, colors->background, alpha);
 	}
 
-	if (con->view) {
-		scene_rect_set_color(con->border.top, colors->child_border, alpha);
-		scene_rect_set_color(con->border.bottom, bottom, alpha);
-		scene_rect_set_color(con->border.left, colors->child_border, alpha);
-		scene_rect_set_color(con->border.right, right, alpha);
+	if (con->view && con->border.vfx) {
+		struct wlr_scene_node_vfx vfx = {0};
+		vfx.border.thickness[0] = con->current.border_top ? con->current.border_thickness : 0;
+		vfx.border.thickness[1] = con->current.border_right ? con->current.border_thickness : 0;
+		vfx.border.thickness[2] = con->current.border_bottom ? con->current.border_thickness : 0;
+		vfx.border.thickness[3] = con->current.border_left ? con->current.border_thickness : 0;
+		vfx.border.color[0] = colors->child_border[0] * colors->child_border[3] * alpha;
+		vfx.border.color[1] = colors->child_border[1] * colors->child_border[3] * alpha;
+		vfx.border.color[2] = colors->child_border[2] * colors->child_border[3] * alpha;
+		vfx.border.color[3] = colors->child_border[3] * alpha;
+		wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
 	}
 
 	if (con->title_bar.title_text) {

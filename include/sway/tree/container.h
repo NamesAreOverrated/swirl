@@ -86,11 +86,7 @@ struct sway_container {
 
   struct {
     struct wlr_scene_tree *tree;
-
-    struct wlr_scene_rect *top;
-    struct wlr_scene_rect *bottom;
-    struct wlr_scene_rect *left;
-    struct wlr_scene_rect *right;
+    struct wlr_scene_vfx *vfx;
   } border;
 
   struct wlr_scene_tree *content_tree;
