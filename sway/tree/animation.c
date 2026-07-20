@@ -91,6 +91,71 @@ static double prop_interp(struct timespec *start, struct sway_prop_config *cfg) 
 		cfg->stiffness), 0.0);
 }
 
+// ── Scale node capture ──────────────────────────────────────────────────────
+
+enum { SWAY_SCALE_BUF, SWAY_SCALE_RECT };
+
+struct scale_node {
+	int type; // SWAY_SCALE_BUF or SWAY_SCALE_RECT
+	struct wlr_scene_node *node;
+	double orig_x, orig_y, orig_w, orig_h;
+};
+
+static void free_scale_nodes(struct scale_node **nodes, int *count, int *cap) {
+	free(*nodes);
+	*nodes = NULL;
+	*count = 0;
+	*cap = 0;
+}
+
+static void collect_scale_nodes_recurse(struct wlr_scene_node *parent_node,
+		struct scale_node **nodes, int *count, int *cap) {
+	if (parent_node->type != WLR_SCENE_NODE_TREE) {
+		return;
+	}
+	struct wlr_scene_tree *tree = wlr_scene_tree_from_node(parent_node);
+	struct wlr_scene_node *child;
+	wl_list_for_each(child, &tree->children, link) {
+		if (child->type == WLR_SCENE_NODE_TREE) {
+			collect_scale_nodes_recurse(child, nodes, count, cap);
+		} else if (child->type == WLR_SCENE_NODE_BUFFER) {
+			struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(child);
+			if (*count >= *cap) {
+				int new_cap = *cap ? *cap * 2 : 16;
+				struct scale_node *tmp = realloc(*nodes,
+					new_cap * sizeof(struct scale_node));
+				if (!tmp) return;
+				*nodes = tmp;
+				*cap = new_cap;
+			}
+			(*nodes)[*count].type = SWAY_SCALE_BUF;
+			(*nodes)[*count].node = child;
+			(*nodes)[*count].orig_x = child->x;
+			(*nodes)[*count].orig_y = child->y;
+			(*nodes)[*count].orig_w = buf->dst_width;
+			(*nodes)[*count].orig_h = buf->dst_height;
+			(*count)++;
+		} else if (child->type == WLR_SCENE_NODE_RECT) {
+			struct wlr_scene_rect *rect = wlr_scene_rect_from_node(child);
+			if (*count >= *cap) {
+				int new_cap = *cap ? *cap * 2 : 16;
+				struct scale_node *tmp = realloc(*nodes,
+					new_cap * sizeof(struct scale_node));
+				if (!tmp) return;
+				*nodes = tmp;
+				*cap = new_cap;
+			}
+			(*nodes)[*count].type = SWAY_SCALE_RECT;
+			(*nodes)[*count].node = child;
+			(*nodes)[*count].orig_x = child->x;
+			(*nodes)[*count].orig_y = child->y;
+			(*nodes)[*count].orig_w = rect->width;
+			(*nodes)[*count].orig_h = rect->height;
+			(*count)++;
+		}
+	}
+}
+
 // ── Core data structures ────────────────────────────────────────────────────
 
 struct sway_anim {
@@ -105,8 +170,11 @@ struct sway_anim {
 
 	bool scale_active;
 	struct sway_prop_config scale_cfg;
-	double scale_from, scale_to;
+	double scale_from_w, scale_from_h, scale_to_w, scale_to_h;
 	struct timespec scale_start;
+	struct scale_node *scale_nodes;
+	int scale_count;
+	int scale_cap;
 
 	bool alpha_active;
 	struct sway_prop_config alpha_cfg;
@@ -157,11 +225,42 @@ static void anim_apply_pos(struct sway_anim *anim) {
 	wlr_scene_node_set_position(anim->node, x, y);
 }
 
+static void anim_apply_scale(struct sway_anim *anim) {
+	double progress = prop_interp(&anim->scale_start, &anim->scale_cfg);
+	double scale_x = anim->scale_from_w > 0
+		? lerp(1.0, anim->scale_to_w / anim->scale_from_w, progress) : 1.0;
+	double scale_y = anim->scale_from_h > 0
+		? lerp(1.0, anim->scale_to_h / anim->scale_from_h, progress) : 1.0;
+
+	for (int i = 0; i < anim->scale_count; i++) {
+		struct scale_node *sn = &anim->scale_nodes[i];
+		double nx = sn->orig_x * scale_x;
+		double ny = sn->orig_y * scale_y;
+		double nw = sn->orig_w * scale_x;
+		double nh = sn->orig_h * scale_y;
+
+		wlr_scene_node_set_position(sn->node, nx, ny);
+
+		if (sn->type == SWAY_SCALE_BUF) {
+			wlr_scene_buffer_set_dest_size(
+				wlr_scene_buffer_from_node(sn->node),
+				(int)nw, (int)nh);
+		} else {
+			wlr_scene_rect_set_size(
+				wlr_scene_rect_from_node(sn->node),
+				(int)nw, (int)nh);
+		}
+	}
+}
+
 void sway_anim_sync(void) {
 	struct sway_anim *anim;
 	wl_list_for_each(anim, &animations, link) {
 		if (anim->pos_active) {
 			anim_apply_pos(anim);
+		}
+		if (anim->scale_active) {
+			anim_apply_scale(anim);
 		}
 	}
 }
@@ -173,8 +272,13 @@ static void finish_anim(struct sway_anim *anim) {
 		wlr_scene_node_set_position(anim->node,
 			anim->pos_to_x, anim->pos_to_y);
 	}
+	if (anim->scale_active) {
+		anim_apply_scale(anim);
+	}
 	wl_list_remove(&anim->link);
 	wl_list_remove(&anim->node_destroy.link);
+	free_scale_nodes(&anim->scale_nodes,
+		&anim->scale_count, &anim->scale_cap);
 	free(anim);
 }
 
@@ -192,6 +296,37 @@ static int on_anim_tick(void *data) {
 				anim->pos_active = false;
 			} else {
 				anim_apply_pos(anim);
+				all_done = false;
+			}
+		}
+
+		if (anim->scale_active) {
+			if (prop_done(&anim->scale_start, &anim->scale_cfg)) {
+				// set final target sizes
+				double scale_x = anim->scale_from_w > 0
+					? anim->scale_to_w / anim->scale_from_w : 1.0;
+				double scale_y = anim->scale_from_h > 0
+					? anim->scale_to_h / anim->scale_from_h : 1.0;
+				for (int i = 0; i < anim->scale_count; i++) {
+					struct scale_node *sn = &anim->scale_nodes[i];
+					double nx = sn->orig_x * scale_x;
+					double ny = sn->orig_y * scale_y;
+					double nw = sn->orig_w * scale_x;
+					double nh = sn->orig_h * scale_y;
+					wlr_scene_node_set_position(sn->node, nx, ny);
+					if (sn->type == SWAY_SCALE_BUF) {
+						wlr_scene_buffer_set_dest_size(
+							wlr_scene_buffer_from_node(sn->node),
+							(int)nw, (int)nh);
+					} else {
+						wlr_scene_rect_set_size(
+							wlr_scene_rect_from_node(sn->node),
+							(int)nw, (int)nh);
+					}
+				}
+				anim->scale_active = false;
+			} else {
+				anim_apply_scale(anim);
 				all_done = false;
 			}
 		}
@@ -217,6 +352,8 @@ static void handle_node_destroy(struct wl_listener *listener, void *data) {
 	struct sway_anim *anim = wl_container_of(listener, anim, node_destroy);
 	wl_list_remove(&anim->link);
 	wl_list_remove(&anim->node_destroy.link);
+	free_scale_nodes(&anim->scale_nodes,
+		&anim->scale_count, &anim->scale_cap);
 	free(anim);
 }
 
@@ -241,13 +378,33 @@ void sway_anim_move(struct wlr_scene_node *node,
 }
 
 void sway_anim_scale(struct wlr_scene_node *node,
-		double from, double to,
+		double from_w, double from_h,
+		double to_w, double to_h,
 		struct sway_prop_config cfg) {
-	(void)node;
-	(void)from;
-	(void)to;
-	(void)cfg;
-	// TODO: requires offscreen rendering or custom shader
+	struct sway_anim *anim = anim_get_or_create(node);
+	if (!anim) {
+		return;
+	}
+
+	// Only animate if both from dimensions are positive
+	if (from_w <= 0 || from_h <= 0) {
+		return;
+	}
+
+	anim->scale_from_w = from_w;
+	anim->scale_from_h = from_h;
+	anim->scale_to_w = to_w;
+	anim->scale_to_h = to_h;
+	anim->scale_cfg = cfg;
+
+	// Re-capture child nodes (handles retarget)
+	free_scale_nodes(&anim->scale_nodes,
+		&anim->scale_count, &anim->scale_cap);
+	collect_scale_nodes_recurse(node,
+		&anim->scale_nodes, &anim->scale_count, &anim->scale_cap);
+
+	anim->scale_active = true;
+	clock_gettime(CLOCK_MONOTONIC, &anim->scale_start);
 }
 
 void sway_anim_alpha(struct wlr_scene_node *node,

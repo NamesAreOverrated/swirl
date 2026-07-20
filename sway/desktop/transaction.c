@@ -242,8 +242,9 @@ static void apply_container_state(struct sway_container *container,
 
 	memcpy(&container->current, state, sizeof(struct sway_container_state));
 
-	if ((old.x != container->current.x || old.y != container->current.y)
-			&& container->scene_tree) {
+	if (container->scene_tree
+			&& (old.x != container->current.x || old.y != container->current.y)
+			&& (old.x != 0 || old.y != 0)) {
 		double fx = container->scene_tree->node.x;
 		double fy = container->scene_tree->node.y;
 		struct sway_prop_config cfg = {
@@ -255,6 +256,21 @@ static void apply_container_state(struct sway_container *container,
 		sway_anim_move(&container->scene_tree->node,
 			fx, fy,
 			container->current.x, container->current.y,
+			cfg);
+	}
+
+	if (container->scene_tree && old.width > 0 && old.height > 0
+			&& (old.width != container->current.width
+			 || old.height != container->current.height)) {
+		struct sway_prop_config cfg = {
+			.type = SWAY_ANIM_SPRING,
+			.damping_ratio = 1.0,
+			.stiffness = 1200.0,
+			.epsilon = 0.001,
+		};
+		sway_anim_scale(&container->scene_tree->node,
+			old.width, old.height,
+			container->current.width, container->current.height,
 			cfg);
 	}
 
@@ -448,38 +464,9 @@ static void arrange_container(struct sway_container *con,
 			sway_assert(false, "unreachable");
 		}
 
-		int border_bottom = con->current.border_bottom ? border_width : 0;
-		int border_left = con->current.border_left ? border_width : 0;
-		int border_right = con->current.border_right ? border_width : 0;
-		int vert_border_height = MAX(0, height - border_top - border_bottom);
-
-		wlr_scene_rect_set_size(con->border.top, width, border_top);
-		wlr_scene_rect_set_size(con->border.bottom, width, border_bottom);
-		wlr_scene_rect_set_size(con->border.left,
-			border_left, vert_border_height);
-		wlr_scene_rect_set_size(con->border.right,
-			border_right, vert_border_height);
-
-		wlr_scene_node_set_position(&con->border.top->node, 0, 0);
-		wlr_scene_node_set_position(&con->border.bottom->node,
-			0, height - border_bottom);
-		wlr_scene_node_set_position(&con->border.left->node,
-			0, border_top);
-		wlr_scene_node_set_position(&con->border.right->node,
-			width - border_right, border_top);
-
 		// make sure to reparent, it's possible that the client just came out of
 		// fullscreen mode where the parent of the surface is not the container
 		wlr_scene_node_reparent(&con->view->scene_tree->node, con->content_tree);
-		wlr_scene_node_set_position(&con->view->scene_tree->node,
-			border_left, border_top);
-
-		// the output handler for the view wants to detect events for the entire
-		// container so give it negative coordinates to move it back over the
-		// decorations
-		wlr_scene_node_set_position(&con->view->output_handler->node,
-			-border_left, -border_top);
-		wlr_scene_buffer_set_dest_size(con->view->output_handler, width, height);
 	} else {
 		// make sure to disable the title bar if the parent is not managing it
 		if (title_bar) {

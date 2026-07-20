@@ -260,18 +260,7 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
 		col->width_fraction = new_frac;
 		struct sway_workspace *ws = col->pending.workspace;
 		if (ws) {
-			double old_w = col->pending.width;
 			col->pending.width = workspace_width_fraction(ws, new_frac);
-			if (col->scene_tree && old_w != col->pending.width && old_w > 0) {
-				struct sway_prop_config cfg = {
-					.type = SWAY_ANIM_SPRING,
-					.damping_ratio = 1.0,
-					.stiffness = 1200.0,
-					.epsilon = 0.001,
-				};
-			sway_anim_scale(&col->scene_tree->node,
-				old_w / col->pending.width, 1.0, cfg);
-			}
 		}
 		node_set_dirty(&col->node);
 	} else {
@@ -286,19 +275,7 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
 		current->height_fraction = new_frac;
 		struct sway_workspace *ws = current->pending.workspace;
 		if (ws) {
-			double old_h = current->pending.height;
 			current->pending.height = workspace_height_fraction(ws, new_frac);
-			if (current->scene_tree && old_h != current->pending.height
-					&& old_h > 0) {
-				struct sway_prop_config cfg = {
-					.type = SWAY_ANIM_SPRING,
-					.damping_ratio = 1.0,
-					.stiffness = 1200.0,
-					.epsilon = 0.001,
-				};
-			sway_anim_scale(&current->scene_tree->node,
-				old_h / current->pending.height, 1.0, cfg);
-			}
 		}
 		node_set_dirty(&current->node);
 	}
