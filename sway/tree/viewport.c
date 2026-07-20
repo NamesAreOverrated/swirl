@@ -178,6 +178,42 @@ void column_scroll_vert_to(struct sway_container *col,
 	node_set_dirty(&col->node);
 }
 
+double workspace_view_remaining_width(struct sway_workspace *ws, int start_index) {
+	int gaps = ws->gaps_inner;
+	double vp = ws->viewport_x;
+	double vp_end = vp + ws->width;
+	int start = start_index < 0 ? ws->tiling->length - 1 : start_index;
+	for (int i = start; i >= 0; --i) {
+		struct sway_container *col = ws->tiling->items[i];
+		if (col->pending.x + col->pending.width + gaps < vp) {
+			break;
+		}
+		if (col->pending.x > vp_end) {
+			continue;
+		}
+		return vp_end - (col->pending.x + col->pending.width + gaps);
+	}
+	return ws->width;
+}
+
+double column_view_remaining_height(struct sway_container *col, int start_index) {
+	int gap = col->pending.workspace ? col->pending.workspace->gaps_inner : 0;
+	double scroll_y = col->pending.scroll_y;
+	double vp_end = scroll_y + col->pending.height;
+	int start = start_index < 0 ? col->pending.children->length - 1 : start_index;
+	for (int i = start; i >= 0; --i) {
+		struct sway_container *child = col->pending.children->items[i];
+		if (child->pending.y + child->pending.height + gap < scroll_y) {
+			break;
+		}
+		if (child->pending.y > vp_end) {
+			continue;
+		}
+		return vp_end - (child->pending.y + child->pending.height + gap);
+	}
+	return col->pending.height;
+}
+
 void handle_focus_viewport(struct sway_seat *seat,
 		struct sway_container *container) {
 	if (!container || container_is_floating(container)) {

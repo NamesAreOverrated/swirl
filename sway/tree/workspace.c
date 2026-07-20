@@ -949,25 +949,25 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 			container_reap_empty(old_parent);
 		}
 	}
+	bool is_new_col = false;
 	if (con->view) {
 		struct sway_container *col = container_create(NULL);
 		col->pending.workspace = workspace;
 		col->pending.layout = L_VERT;
 		container_add_child(col, con);
 
-		double col_w = workspace_get_new_column_width(workspace);
-		column_set_width_px(col, col_w);
-
 		con->pending.height = workspace_height_fraction(workspace, 1.0);
 		con->height_fraction = 1.0;
 
 		con = col;
+		is_new_col = true;
 	}
 
 	// Insert after the focused column
 	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_node *node = seat_get_focus_inactive(seat, &workspace->node);
 	int idx = workspace->tiling->length;
+	int start_idx = -1;
 	if (node && node->type == N_CONTAINER
 			&& !container_is_floating_or_child(node->sway_container)) {
 		struct sway_container *focus_col =
@@ -975,7 +975,13 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		int found = list_find(workspace->tiling, focus_col);
 		if (found >= 0) {
 			idx = found + 1;
+			start_idx = found;
 		}
+	}
+	if (is_new_col) {
+		double col_w = workspace_clamp_column_width(workspace,
+			workspace_view_remaining_width(workspace, start_idx));
+		column_set_width_px(con, col_w);
 	}
 	list_insert(workspace->tiling, idx, con);
 

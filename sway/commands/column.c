@@ -89,11 +89,9 @@ struct cmd_results *cmd_column_release(int argc, char **argv) {
 	newcol->pending.layout = L_VERT;
 	newcol->pending.workspace = ws;
 
-	double col_width = workspace_get_new_column_width(ws);
+	double col_width = workspace_clamp_column_width(ws,
+		workspace_view_remaining_width(ws, cidx));
 	column_set_width_px(newcol, col_width);
-	newcol->width_fraction = ws->width > 0
-		? col_width / ws->width
-		: layout_get_default_width(ws);
 
 	for (int i = children->length - 1; i >= start; --i) {
 		struct sway_container *child = children->items[i];
