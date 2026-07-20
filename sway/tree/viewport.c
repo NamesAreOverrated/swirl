@@ -72,9 +72,6 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	int gaps = ws->gaps_inner;
 	double usable_h = parent->height;
 
-	sway_log(SWAY_DEBUG, "[BUG] workspace_arrange_columns: ws='%s' parent=%dx%d+%d,%d gaps=%d usable_h=%.0f",
-		ws->name, parent->width, parent->height, parent->x, parent->y, gaps, usable_h);
-
 	double x = 0;
 	for (int i = 0; i < ws->tiling->length; ++i) {
 		struct sway_container *col = ws->tiling->items[i];
@@ -83,10 +80,6 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 		col->pending.y = 0;
 		col->pending.height = usable_h;
 		node_set_dirty(&col->node);
-
-		sway_log(SWAY_DEBUG, "[BUG] workspace_arrange_columns: col=%p i=%d pending=(x=%.0f y=%.0f w=%.0f h=%.0f) children=%d",
-			col, i, col->pending.x, col->pending.y, col->pending.width, col->pending.height,
-			col->pending.children ? col->pending.children->length : -1);
 
 		if (!col->view && col->pending.children) {
 			viewport_arrange_windows(col);
@@ -105,9 +98,6 @@ void viewport_arrange_windows(struct sway_container *col) {
 	struct sway_workspace *ws = col->pending.workspace;
 	double gap = ws ? ws->gaps_inner : 0;
 
-	sway_log(SWAY_DEBUG, "[BUG] viewport_arrange_windows: col=%p children=%d col->pending.w=%.0f gap=%.0f",
-		col, col->pending.children->length, col->pending.width, gap);
-
 	for (int i = 0; i < col->pending.children->length; ++i) {
 		struct sway_container *child = col->pending.children->items[i];
 		double hf = child->height_fraction;
@@ -124,10 +114,6 @@ void viewport_arrange_windows(struct sway_container *col) {
 		child->pending.width = col->pending.width;
 		y += child->pending.height + gap;
 		node_set_dirty(&child->node);
-
-		sway_log(SWAY_DEBUG, "[BUG] viewport_arrange_windows: child=%p i=%d pending=(x=%.0f y=%.0f w=%.0f h=%.0f) view=%d",
-			child, i, child->pending.x, child->pending.y,
-			child->pending.width, child->pending.height, child->view != NULL);
 
 		if (child->view) {
 			view_autoconfigure(child->view);
@@ -161,8 +147,6 @@ void column_scroll_vert_to(struct sway_container *col,
 	}
 	if (!win || win == col || list_find(col->pending.children, win) == -1) {
 		col->pending.scroll_y = 0;
-		sway_log(SWAY_DEBUG, "[BUG] column_scroll_vert_to: RESET scroll_y=0 (win=%p col=%p found=%d)",
-			win, col, win ? list_find(col->pending.children, win) : -2);
 		node_set_dirty(&col->node);
 		return;
 	}
@@ -176,12 +160,6 @@ void column_scroll_vert_to(struct sway_container *col,
 		win->pending.height,
 		old_scroll_y, area_h, max_y);
 	col->pending.scroll_y = new_scroll_y;
-
-	sway_log(SWAY_DEBUG, "[BUG] column_scroll_vert_to: col=%p win='%.*s' area_h=%.0f gaps=%d total_h=%.0f max_y=%.0f old_y=%.0f new_y=%.0f content_tree.y=%.0f",
-		col,
-		(int)strlen(win->formatted_title), win->formatted_title,
-		area_h, gaps, total_h, max_y, old_scroll_y, new_scroll_y,
-		(double)(col->content_tree ? col->content_tree->node.y : -999));
 
 	if (col->content_tree) {
 		double from_y = col->content_tree->node.y;
@@ -222,11 +200,6 @@ void handle_focus_viewport(struct sway_seat *seat,
 	double area_w = ws->width;
 	double area_h = ws->height;
 
-	sway_log(SWAY_DEBUG, "[BUG] handle_focus_viewport: container=%p col=%p ws='%s' ws_dim=%dx%d gaps=%d viewport_x=%.0f",
-		container, col, ws->name, ws->width, ws->height, gaps, ws->viewport_x);
-	sway_log(SWAY_DEBUG, "[BUG] handle_focus_viewport: col->pending (x=%.0f y=%.0f w=%.0f h=%.0f scroll_y=%.0f)",
-		col->pending.x, col->pending.y, col->pending.width, col->pending.height, col->pending.scroll_y);
-
 	// Horizontal — edge-snap column into viewport
 	double total_w = total_extent_h(ws->tiling, gaps);
 	double max_x = total_w > area_w ? total_w - area_w : 0.0;
@@ -234,9 +207,6 @@ void handle_focus_viewport(struct sway_seat *seat,
 		col->pending.width,
 		ws->viewport_x, area_w, max_x);
 	ws->viewport_y = 0;
-
-	sway_log(SWAY_DEBUG, "[BUG] handle_focus_viewport: after horiz snap -> viewport_x=%.0f total_w=%.0f max_x=%.0f area_w=%.0f",
-		ws->viewport_x, total_w, max_x, area_w);
 
 	// Vertical — edge-snap focused window into column viewport
 	column_scroll_vert_to(col, col != container ? container : NULL, area_h);

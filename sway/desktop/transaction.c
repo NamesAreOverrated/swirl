@@ -249,8 +249,6 @@ static void apply_container_state(struct sway_container *container,
       (old.x != container->current.x || old.y != container->current.y)) {
     double fx = container->scene_tree->node.x;
     double fy = container->scene_tree->node.y;
-    sway_log(SWAY_DEBUG, "[BUG] apply_container_state: container=%p old=(%.0f,%.0f) current=(%.0f,%.0f) scene_node=(%.0f,%.0f) ANIM",
-      container, old.x, old.y, container->current.x, container->current.y, fx, fy);
     struct sway_prop_config cfg = {
         .type = SWAY_ANIM_SPRING,
         .damping_ratio = 1.0,
@@ -260,8 +258,6 @@ static void apply_container_state(struct sway_container *container,
     sway_anim_move(&container->scene_tree->node, fx, fy, container->current.x,
                    container->current.y, cfg);
   } else if (container->scene_tree) {
-    sway_log(SWAY_DEBUG, "[BUG] apply_container_state: container=%p old=(%.0f,%.0f) current=(%.0f,%.0f) NOANIM",
-      container, old.x, old.y, container->current.x, container->current.y);
   }
 
   if (view) {
@@ -583,11 +579,6 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
   for (int i = 0; i < ws->current.tiling->length; i++) {
     struct sway_container *col = ws->current.tiling->items[i];
 
-    sway_log(SWAY_DEBUG, "[BUG] arrange_workspace_tiling: col=%p i=%d current (x=%d y=%d w=%d h=%d scroll=%d) scene_node=(%d,%d)",
-      col, i,
-      (int)col->current.x, (int)col->current.y, (int)col->current.width, (int)col->current.height, (int)col->current.scroll_y,
-      (int)col->scene_tree->node.x, (int)col->scene_tree->node.y);
-
     wlr_scene_node_set_position(&col->scene_tree->node, col->current.x,
                                 col->current.y);
     wlr_scene_node_reparent(&col->scene_tree->node, ws->layers.tiling);
@@ -599,8 +590,6 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
                         ws->gaps_inner);
       wlr_scene_node_set_position(&col->content_tree->node, 0,
                                   -col->current.scroll_y);
-      sway_log(SWAY_DEBUG, "[BUG] arrange_workspace_tiling: content_tree -> (0, %.0f) ws->gaps_inner=%d",
-        -col->current.scroll_y, ws->gaps_inner);
     }
   }
 }
@@ -666,13 +655,6 @@ static void arrange_output(struct sway_output *output, int width, int height) {
         double old_ty = child->layers.tiling->node.y;
         double new_tx = gaps->left + area->x - child->current.viewport_x;
         double new_ty = gaps->top + area->y - child->current.viewport_y;
-
-        sway_log(SWAY_DEBUG, "[BUG] arrange_output(txn): ws='%s' area=(%d,%d %dx%d) gaps=(%d,%d,%d,%d) viewport=(%.0f,%.0f) tiling_layer: old=(%.0f,%.0f) -> new=(%.0f,%.0f)",
-          child->name,
-          area->x, area->y, area->width, area->height,
-          gaps->left, gaps->top, gaps->right, gaps->bottom,
-          child->current.viewport_x, child->current.viewport_y,
-          old_tx, old_ty, new_tx, new_ty);
 
         if (old_tx != new_tx || old_ty != new_ty) {
           struct sway_prop_config cfg = {

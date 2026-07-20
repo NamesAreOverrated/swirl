@@ -155,9 +155,6 @@ void sway_anim_sync(void) {
 	struct sway_anim *anim;
 	wl_list_for_each(anim, &animations, link) {
 		if (anim->pos_active) {
-			sway_log(SWAY_DEBUG, "[BUG] sway_anim_sync: node=%p from=(%.0f,%.0f) to=(%.0f,%.0f)",
-				anim->node, anim->pos_from_x, anim->pos_from_y,
-				anim->pos_to_x, anim->pos_to_y);
 			anim_apply_pos(anim);
 		}
 	}

@@ -1040,11 +1040,6 @@ bool workspace_has_single_visible_container(struct sway_workspace *ws) {
 }
 
 void workspace_add_gaps(struct sway_workspace *ws) {
-	sway_log(SWAY_DEBUG, "[BUG] workspace_add_gaps: ws='%s' gaps_outer=(%d,%d,%d,%d) gaps_inner=%d config_gaps_inner=%d",
-		ws->name,
-		ws->gaps_outer.top, ws->gaps_outer.right, ws->gaps_outer.bottom, ws->gaps_outer.left,
-		ws->gaps_inner, config->gaps_inner);
-
 	if (config->smart_gaps == SMART_GAPS_ON
 			&& workspace_has_single_visible_container(ws)) {
 		ws->current_gaps.top = 0;
