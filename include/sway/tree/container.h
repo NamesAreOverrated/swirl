@@ -1,34 +1,34 @@
 #ifndef _SWAY_CONTAINER_H
 #define _SWAY_CONTAINER_H
+#include "list.h"
+#include "sway/tree/node.h"
 #include <stdint.h>
 #include <sys/types.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_scene.h>
-#include "list.h"
-#include "sway/tree/node.h"
 
 struct sway_view;
 struct sway_seat;
 
 enum sway_container_layout {
-	L_NONE,
-	L_HORIZ,
-	L_VERT,
-	L_STACKED,
-	L_TABBED,
+  L_NONE,
+  L_HORIZ,
+  L_VERT,
+  L_STACKED,
+  L_TABBED,
 };
 
 enum sway_container_border {
-	B_NONE,
-	B_PIXEL,
-	B_NORMAL,
-	B_CSD,
+  B_NONE,
+  B_PIXEL,
+  B_NORMAL,
+  B_CSD,
 };
 
 enum sway_fullscreen_mode {
-	FULLSCREEN_NONE,
-	FULLSCREEN_WORKSPACE,
-	FULLSCREEN_GLOBAL,
+  FULLSCREEN_NONE,
+  FULLSCREEN_WORKSPACE,
+  FULLSCREEN_GLOBAL,
 };
 
 struct sway_root;
@@ -39,114 +39,114 @@ struct sway_view;
 enum wlr_direction;
 
 struct sway_container_state {
-	// Container properties
-	enum sway_container_layout layout;
-	double x, y;
-	double width, height;
+  // Container properties
+  enum sway_container_layout layout;
+  double x, y;
+  double width, height;
 
-	enum sway_fullscreen_mode fullscreen_mode;
+  enum sway_fullscreen_mode fullscreen_mode;
 
-	struct sway_workspace *workspace; // NULL when hidden in the scratchpad
-	struct sway_container *parent;    // NULL if container in root of workspace
-	list_t *children;                 // struct sway_container
+  struct sway_workspace *workspace; // NULL when hidden in the scratchpad
+  struct sway_container *parent;    // NULL if container in root of workspace
+  list_t *children;                 // struct sway_container
 
-	struct sway_container *focused_inactive_child;
-	bool focused;
+  struct sway_container *focused_inactive_child;
+  bool focused;
 
-	enum sway_container_border border;
-	int border_thickness;
-	bool border_top;
-	bool border_bottom;
-	bool border_left;
-	bool border_right;
+  enum sway_container_border border;
+  int border_thickness;
+  bool border_top;
+  bool border_bottom;
+  bool border_left;
+  bool border_right;
 
-	// These are in layout coordinates.
-	double content_x, content_y;
-	double content_width, content_height;
+  // These are in layout coordinates.
+  double content_x, content_y;
+  double content_width, content_height;
 
-	// Column scroll offset (non-view containers only)
-	double scroll_y;
+  // Column scroll offset (non-view containers only)
+  double scroll_y;
 };
 
 struct sway_container {
-	struct sway_node node;
-	struct sway_view *view;
+  struct sway_node node;
+  struct sway_view *view;
 
-	struct wlr_scene_tree *scene_tree;
+  struct wlr_scene_tree *scene_tree;
 
-	struct {
-		struct wlr_scene_tree *tree;
+  struct {
+    struct wlr_scene_tree *tree;
 
-		struct wlr_scene_tree *border;
-		struct wlr_scene_tree *background;
+    struct wlr_scene_tree *border;
+    struct wlr_scene_tree *background;
 
-		struct sway_text_node *title_text;
-		struct sway_text_node *marks_text;
-	} title_bar;
+    struct sway_text_node *title_text;
+    struct sway_text_node *marks_text;
+  } title_bar;
 
-	struct {
-		struct wlr_scene_tree *tree;
+  struct {
+    struct wlr_scene_tree *tree;
 
-		struct wlr_scene_rect *top;
-		struct wlr_scene_rect *bottom;
-		struct wlr_scene_rect *left;
-		struct wlr_scene_rect *right;
-	} border;
+    struct wlr_scene_rect *top;
+    struct wlr_scene_rect *bottom;
+    struct wlr_scene_rect *left;
+    struct wlr_scene_rect *right;
+  } border;
 
-	struct wlr_scene_tree *content_tree;
+  struct wlr_scene_tree *content_tree;
 
-	struct sway_container_state current;
-	struct sway_container_state pending;
+  struct sway_container_state current;
+  struct sway_container_state pending;
 
-	char *title;           // The view's title (unformatted)
-	char *formatted_title; // The title displayed in the title bar
-	int title_width;
+  char *title;           // The view's title (unformatted)
+  char *formatted_title; // The title displayed in the title bar
+  int title_width;
 
-	char *title_format;
+  char *title_format;
 
-	enum sway_container_layout prev_split_layout;
+  enum sway_container_layout prev_split_layout;
 
-	// Whether stickiness has been enabled on this container. Use
-	// `container_is_sticky_[or_child]` rather than accessing this field
-	// directly; it'll also check that the container is floating.
-	bool is_sticky;
+  // Whether stickiness has been enabled on this container. Use
+  // `container_is_sticky_[or_child]` rather than accessing this field
+  // directly; it'll also check that the container is floating.
+  bool is_sticky;
 
-	// For C_ROOT, this has no meaning
-	// For other types, this is the position in layout coordinates
-	// Includes borders
-	double saved_x, saved_y;
-	double saved_width, saved_height;
+  // For C_ROOT, this has no meaning
+  // For other types, this is the position in layout coordinates
+  // Includes borders
+  double saved_x, saved_y;
+  double saved_width, saved_height;
 
-	// Used when the view changes to CSD unexpectedly. This will be a non-B_CSD
-	// border which we use to restore when the view returns to SSD.
-	enum sway_container_border saved_border;
+  // Used when the view changes to CSD unexpectedly. This will be a non-B_CSD
+  // border which we use to restore when the view returns to SSD.
+  enum sway_container_border saved_border;
 
-	// The share of the space of parent container this container occupies
-	double width_fraction;
-	double height_fraction;
+  // The share of the space of parent container this container occupies
+  double width_fraction;
+  double height_fraction;
 
-	// The share of space of the parent container that all children occupy
-	// Used for doing the resize calculations
-	double child_total_width;
-	double child_total_height;
+  // The share of space of the parent container that all children occupy
+  // Used for doing the resize calculations
+  double child_total_width;
+  double child_total_height;
 
-	// Indicates that the container is a scratchpad container.
-	// Both hidden and visible scratchpad containers have scratchpad=true.
-	// Hidden scratchpad containers have a NULL parent.
-	bool scratchpad;
+  // Indicates that the container is a scratchpad container.
+  // Both hidden and visible scratchpad containers have scratchpad=true.
+  // Hidden scratchpad containers have a NULL parent.
+  bool scratchpad;
 
-	// Stores last output size and position for adjusting coordinates of
-	// scratchpad windows.
-	// Unused for non-scratchpad windows.
-	struct wlr_box transform;
+  // Stores last output size and position for adjusting coordinates of
+  // scratchpad windows.
+  // Unused for non-scratchpad windows.
+  struct wlr_box transform;
 
-	float alpha;
+  float alpha;
 
-	list_t *marks; // char *
+  list_t *marks; // char *
 
-	struct {
-		struct wl_signal destroy;
-	} events;
+  struct {
+    struct wl_signal destroy;
+  } events;
 };
 
 struct sway_container *container_create(struct sway_view *view);
@@ -159,22 +159,27 @@ void container_begin_destroy(struct sway_container *con);
  * Search a container's descendants a container based on test criteria. Returns
  * the first container that passes the test.
  */
-struct sway_container *container_find_child(struct sway_container *container,
-		bool (*test)(struct sway_container *view, void *data), void *data);
+struct sway_container *
+container_find_child(struct sway_container *container,
+                     bool (*test)(struct sway_container *view, void *data),
+                     void *data);
 
 void container_for_each_child(struct sway_container *container,
-		void (*f)(struct sway_container *container, void *data), void *data);
+                              void (*f)(struct sway_container *container,
+                                        void *data),
+                              void *data);
 
 /**
  * Returns the fullscreen container obstructing this container if it exists.
  */
-struct sway_container *container_obstructing_fullscreen_container(struct sway_container *container);
+struct sway_container *
+container_obstructing_fullscreen_container(struct sway_container *container);
 
 /**
  * Returns true if the given container is an ancestor of this container.
  */
 bool container_has_ancestor(struct sway_container *container,
-		struct sway_container *ancestor);
+                            struct sway_container *ancestor);
 
 void container_reap_empty(struct sway_container *con);
 
@@ -187,7 +192,7 @@ void container_update_marks(struct sway_container *container);
 size_t parse_title_format(struct sway_container *container, char *buffer);
 
 size_t container_build_representation(enum sway_container_layout layout,
-		list_t *children, char *buffer);
+                                      list_t *children, char *buffer);
 
 void container_update_representation(struct sway_container *container);
 
@@ -197,10 +202,10 @@ void container_update_representation(struct sway_container *container);
 size_t container_titlebar_height(void);
 
 void floating_calculate_constraints(int *min_width, int *max_width,
-		int *min_height, int *max_height);
+                                    int *min_height, int *max_height);
 
-void floating_fix_coordinates(struct sway_container *con,
-		struct wlr_box *old, struct wlr_box *new);
+void floating_fix_coordinates(struct sway_container *con, struct wlr_box *old,
+                              struct wlr_box *new);
 
 void container_floating_resize_and_center(struct sway_container *con);
 
@@ -228,8 +233,8 @@ void container_get_box(struct sway_container *container, struct wlr_box *box);
 /**
  * Move a floating container by the specified amount.
  */
-void container_floating_translate(struct sway_container *con,
-		double x_amount, double y_amount);
+void container_floating_translate(struct sway_container *con, double x_amount,
+                                  double y_amount);
 
 /**
  * Choose an output for the floating container's new position.
@@ -239,8 +244,8 @@ struct sway_output *container_floating_find_output(struct sway_container *con);
 /**
  * Move a floating container to a new layout-local position.
  */
-void container_floating_move_to(struct sway_container *con,
-		double lx, double ly);
+void container_floating_move_to(struct sway_container *con, double lx,
+                                double ly);
 
 /**
  * Move a floating container to the center of the workspace.
@@ -256,7 +261,7 @@ bool container_has_urgent_child(struct sway_container *container);
 void container_end_mouse_operation(struct sway_container *container);
 
 void container_set_fullscreen(struct sway_container *con,
-		enum sway_fullscreen_mode mode);
+                              enum sway_fullscreen_mode mode);
 
 /**
  * Convenience function.
@@ -267,8 +272,8 @@ void container_fullscreen_disable(struct sway_container *con);
  * Walk up the container tree branch starting at the given container, and return
  * its earliest ancestor.
  */
-struct sway_container *container_toplevel_ancestor(
-		struct sway_container *container);
+struct sway_container *
+container_toplevel_ancestor(struct sway_container *container);
 
 /**
  * Return true if the container is floating, or a child of a floating split
@@ -291,29 +296,29 @@ int container_sibling_index(struct sway_container *child);
 void container_handle_fullscreen_reparent(struct sway_container *con);
 
 void container_add_child(struct sway_container *parent,
-		struct sway_container *child);
+                         struct sway_container *child);
 
 void container_insert_child(struct sway_container *parent,
-		struct sway_container *child, int i);
+                            struct sway_container *child, int i);
 
 /**
  * Side should be 0 to add before, or 1 to add after.
  */
 void container_add_sibling(struct sway_container *parent,
-		struct sway_container *child, bool after);
+                           struct sway_container *child, bool after);
 
 void container_detach(struct sway_container *child);
 
 void container_replace(struct sway_container *container,
-		struct sway_container *replacement);
+                       struct sway_container *replacement);
 
 void container_swap(struct sway_container *con1, struct sway_container *con2);
 
 struct sway_container *container_split(struct sway_container *child,
-		enum sway_container_layout layout);
+                                       enum sway_container_layout layout);
 
 bool container_is_transient_for(struct sway_container *child,
-		struct sway_container *ancestor);
+                                struct sway_container *ancestor);
 
 /**
  * Find any container that has the given mark and return it.

@@ -41,14 +41,6 @@ void sway_anim_move(struct wlr_scene_node *node,
 	double to_x, double to_y,
 	struct sway_prop_config cfg);
 
-// Queue a size animation.  Captures all child buffer/rect sizes at call time,
-// then interpolates them from original to (original * to/from) over duration.
-// from_w/from_h and to_w/to_h are logical container sizes (not per-child).
-void sway_anim_scale(struct wlr_scene_node *node,
-	double from_w, double from_h,
-	double to_w, double to_h,
-	struct sway_prop_config cfg);
-
 // TODO: Queue an alpha animation.  Needs offscreen rendering.
 void sway_anim_alpha(struct wlr_scene_node *node,
 	double from, double to,
