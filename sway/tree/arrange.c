@@ -344,6 +344,13 @@ void arrange_workspace(struct sway_workspace *workspace) {
 
 			struct sway_container *focused_win =
 				seat_get_focus_inactive_view(seat, &focus->node);
+			sway_log(SWAY_DEBUG, "[BUG] arrange_workspace: ws='%s' area=%dx%d+%d,%d box=%dx%d+%d,%d gaps_inner=%d focus_col=%p (%.*s) focused_win=%p",
+				workspace->name,
+				area->width, area->height, area->x, area->y,
+				box.width, box.height, box.x, box.y,
+				workspace->gaps_inner,
+				focus, focus ? (int)strlen(focus->formatted_title) : 0, focus ? focus->formatted_title : "NULL",
+				focused_win);
 			column_scroll_vert_to(focus, focused_win, box.height);
 		} else {
 			workspace->viewport_x = 0;
