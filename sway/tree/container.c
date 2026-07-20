@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <drm_fourcc.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <wayland-server-core.h>
@@ -209,11 +210,10 @@ void container_update(struct sway_container *con) {
 		vfx.corner_radius[1] = r;
 		vfx.corner_radius[2] = r;
 		vfx.corner_radius[3] = r;
-		// Square inner edge matches the square content area
-		vfx.inner_corner_radius[0] = 0;
-		vfx.inner_corner_radius[1] = 0;
-		vfx.inner_corner_radius[2] = 0;
-		vfx.inner_corner_radius[3] = 0;
+		vfx.inner_corner_radius[0] = fmaxf(0, r - fmaxf(vfx.border.thickness[0], vfx.border.thickness[3]));
+		vfx.inner_corner_radius[1] = fmaxf(0, r - fmaxf(vfx.border.thickness[0], vfx.border.thickness[1]));
+		vfx.inner_corner_radius[2] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[1]));
+		vfx.inner_corner_radius[3] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[3]));
 		wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
 	}
 
