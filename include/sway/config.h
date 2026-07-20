@@ -568,6 +568,10 @@ struct sway_config {
 	int border_thickness;
 	int floating_border_thickness;
 	int corner_radius;
+	bool shadow_enabled;
+	int shadow_blur_radius;
+	float shadow_opacity;
+	float shadow_color[4];
 	enum edge_border_types hide_edge_borders;
 	enum edge_border_smart_types hide_edge_borders_smart;
 	bool hide_lone_tab;

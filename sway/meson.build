@@ -105,6 +105,7 @@ sway_sources = files(
 	'commands/seat/shortcuts_inhibitor.c',
 	'commands/seat/xcursor_theme.c',
 	'commands/set.c',
+	'commands/shadow.c',
 	'commands/show_marks.c',
 	'commands/shortcuts_inhibitor.c',
 	'commands/smart_borders.c',

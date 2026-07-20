@@ -305,6 +305,13 @@ static void config_defaults(struct sway_config *config) {
 	config->border_thickness = 2;
 	config->floating_border_thickness = 2;
 	config->corner_radius = 0;
+	config->shadow_enabled = false;
+	config->shadow_blur_radius = 6;
+	config->shadow_opacity = 0.5f;
+	config->shadow_color[0] = 0.0f;
+	config->shadow_color[1] = 0.0f;
+	config->shadow_color[2] = 0.0f;
+	config->shadow_color[3] = 1.0f;
 	config->hide_edge_borders = E_NONE;
 	config->hide_edge_borders_smart = ESMART_OFF;
 	config->hide_lone_tab = false;

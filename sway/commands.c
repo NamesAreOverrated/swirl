@@ -84,6 +84,7 @@ static const struct cmd_handler handlers[] = {
 	{ "popup_during_fullscreen", cmd_popup_during_fullscreen },
 	{ "seat", cmd_seat },
 	{ "set", cmd_set },
+	{ "shadow", cmd_shadow },
 	{ "show_marks", cmd_show_marks },
 	{ "smart_borders", cmd_smart_borders },
 	{ "smart_gaps", cmd_smart_gaps },

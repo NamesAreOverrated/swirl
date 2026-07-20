@@ -214,6 +214,17 @@ void container_update(struct sway_container *con) {
 		vfx.inner_corner_radius[1] = fmaxf(0, r - fmaxf(vfx.border.thickness[0], vfx.border.thickness[1]));
 		vfx.inner_corner_radius[2] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[1]));
 		vfx.inner_corner_radius[3] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[3]));
+		if (config->shadow_enabled) {
+			vfx.shadow.blur_sigma = (float)config->shadow_blur_radius;
+			vfx.shadow.opacity = config->shadow_opacity;
+			vfx.shadow.color[0] = config->shadow_color[0];
+			vfx.shadow.color[1] = config->shadow_color[1];
+			vfx.shadow.color[2] = config->shadow_color[2];
+			vfx.shadow.color[3] = config->shadow_color[3];
+		} else {
+			vfx.shadow.blur_sigma = 0.0f;
+			vfx.shadow.opacity = 0.0f;
+		}
 		wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
 	}
 

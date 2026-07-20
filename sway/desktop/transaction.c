@@ -455,8 +455,9 @@ static void arrange_container(struct sway_container *con, int width, int height,
     int border_left = con->current.border_left ? border_width : 0;
 
     if (con->border.vfx) {
-      wlr_scene_node_set_position(&con->border.vfx->node, 0, 0);
-      wlr_scene_vfx_set_size(con->border.vfx, width, height);
+      int shadow_ext = config->shadow_enabled ? config->shadow_blur_radius * 3 : 0;
+      wlr_scene_node_set_position(&con->border.vfx->node, -shadow_ext, -shadow_ext);
+      wlr_scene_vfx_set_size(con->border.vfx, width + shadow_ext * 2, height + shadow_ext * 2);
 
       struct wlr_scene_node_vfx vfx = {0};
       if (con->border.vfx->node.vfx != NULL) {
@@ -478,6 +479,17 @@ static void arrange_container(struct sway_container *con, int width, int height,
       vfx.inner_corner_radius[1] = fmaxf(0, r - fmaxf(vfx.border.thickness[0], vfx.border.thickness[1]));
       vfx.inner_corner_radius[2] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[1]));
       vfx.inner_corner_radius[3] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[3]));
+      if (config->shadow_enabled) {
+        vfx.shadow.blur_sigma = (float)config->shadow_blur_radius;
+        vfx.shadow.opacity = config->shadow_opacity;
+        vfx.shadow.color[0] = config->shadow_color[0];
+        vfx.shadow.color[1] = config->shadow_color[1];
+        vfx.shadow.color[2] = config->shadow_color[2];
+        vfx.shadow.color[3] = config->shadow_color[3];
+      } else {
+        vfx.shadow.blur_sigma = 0.0f;
+        vfx.shadow.opacity = 0.0f;
+      }
       wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
     }
 
