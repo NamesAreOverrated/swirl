@@ -558,3 +558,87 @@ fast path is identical to upstream: `if (!node->vfx && !node->visual) { /* same 
 9. Add pixman fallback rendering for VFX + visual overrides
 10. Remove dead code: `container->border.{top,bottom,left,right}` in Sway,
     old `sway_anim_scale` remnants, `sway_anim_alpha` stub
+
+---
+
+## Quirks & Findings
+
+### 1. `scene_node_opaque_region` has no VFX case
+
+`scene_opaque_region()` (called per-node during the visibility/update pass)
+lacked a `WLR_SCENE_NODE_VFX` branch and fell through to the default, which
+set the **entire VFX node bounds as fully opaque**. Since the VFX node is a
+sibling drawn above the content, its "opaque" area was subtracted from the
+shared visibility accumulator *before* the content buffer was processed,
+causing the content's `node->visible` to be empty (culled).
+
+**Fix:** Add `} else if (node->type == WLR_SCENE_NODE_VFX) { return; }` to
+report zero opaque area.
+
+### 2. Blend mode forced to NONE when uniform `color->a == 1.0`
+
+`render_pass_add_rect()` in `render/gles2/pass.c` overrides the blend mode:
+```c
+color->a == 1.0 ? WLR_RENDER_BLEND_MODE_NONE : options->blend_mode;
+```
+For a VFX border frame, the border color's alpha is typically 1.0 (fully opaque
+border paint). This forces `WLR_RENDER_BLEND_MODE_NONE`, but the shader
+computes per-pixel alpha — the center is `color * 0 = (0,0,0,0)`. With NONE
+blend mode, `gl_FragColor = (0,0,0,0)` is written directly, overwriting the
+framebuffer with black instead of letting content show through.
+
+**Fix:** Check `border_thickness` before the blend-mode decision — when any
+border thickness is non-zero, force `WLR_RENDER_BLEND_MODE_PREMULTIPLIED`.
+
+### 3. Shader border offset direction (sign error)
+
+The original shader computed the inner (content) rect offset as:
+```glsl
+vec2 inner_pos = pos + vec2(bt[3], bt[0]); // BUG: should be subtraction
+```
+`pos` is the fragment position relative to the VFX node's top-left. The inner
+rect starts at `(bt_left, bt_top)` in VFX coordinates. But `corner_alpha()`
+interprets its first argument as coordinates *within* the inner rect's own
+space (where `(0,0)` is the inner rect's origin). Adding the offset pushed
+the inner rect's *perceived* origin `2×` inward, so the top and left border
+areas were treated as inside the inner rect and made transparent.
+
+**Fix:** `inner_pos = pos - vec2(bt[3], bt[0])` — subtracting shifts the
+coordinate space so VFX `(bt_left, bt_top)` maps to `(0, 0)` in inner-rect
+space.
+
+### 4. `fwidth()` requires GL_OES_standard_derivatives on GLES2
+
+GLES2 does not support `fwidth()` without an explicit extension enable:
+```glsl
+#extension GL_OES_standard_derivatives : enable
+```
+Without it, the shader silently fails to compile on some drivers (notably
+Mesa software rasterizer) and produces aliased/non-existent corner
+smoothing on others.
+
+### 5. wlroots as a standalone git repo inside sway
+
+`subprojects/wlroots/` has its own `.git/` directory — **it is not a git
+submodule**. Both repos need separate commits:
+```bash
+cd subprojects/wlroots && git commit -m "..."
+cd ../.. && git commit -m "..."
+```
+The meson build system picks up whatever is on disk. Rebuilding after
+wlroots changes requires recompiling wlroots, but ninja handles this
+automatically.
+
+### 6. `WL_OUTPUT_TRANSFORM_FLIPPED_180` projection matrix
+
+The GLES2 render pass creates its projection matrix with
+`WL_OUTPUT_TRANSFORM_FLIPPED_180`, not `WL_OUTPUT_TRANSFORM_NORMAL`:
+```c
+matrix_projection(pass->projection_matrix, wlr_buffer->width, wlr_buffer->height,
+    WL_OUTPUT_TRANSFORM_FLIPPED_180);
+```
+This does **not** actually flip the Y axis (`mat[4] = 2/height`, positive),
+so the box coordinates in output space and `gl_FragCoord.xy` are in the same
+orientation — both have Y = 0 at the top and Y increasing downward. The
+shader's `pos = gl_FragCoord.xy - u_box.xy` works correctly without any
+Y-coordinate adjustment.
