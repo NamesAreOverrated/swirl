@@ -116,6 +116,7 @@ static const struct cmd_handler command_handlers[] = {
 	{ "border", cmd_border },
 	{ "column_release", cmd_column_release },
 	{ "column_take", cmd_column_take },
+	{ "corner_radius", cmd_corner_radius },
 	{ "create_output", cmd_create_output },
 	{ "exit", cmd_exit },
 	{ "floating", cmd_floating },

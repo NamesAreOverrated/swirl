@@ -567,6 +567,7 @@ struct sway_config {
 	enum sway_container_border floating_border;
 	int border_thickness;
 	int floating_border_thickness;
+	int corner_radius;
 	enum edge_border_types hide_edge_borders;
 	enum edge_border_smart_types hide_edge_borders_smart;
 	bool hide_lone_tab;

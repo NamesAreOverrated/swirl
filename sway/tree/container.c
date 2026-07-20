@@ -204,6 +204,11 @@ void container_update(struct sway_container *con) {
 		vfx.border.color[1] = colors->child_border[1] * colors->child_border[3] * alpha;
 		vfx.border.color[2] = colors->child_border[2] * colors->child_border[3] * alpha;
 		vfx.border.color[3] = colors->child_border[3] * alpha;
+		float r = config->corner_radius;
+		vfx.corner_radius[0] = r;
+		vfx.corner_radius[1] = r;
+		vfx.corner_radius[2] = r;
+		vfx.corner_radius[3] = r;
 		wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
 	}
 
