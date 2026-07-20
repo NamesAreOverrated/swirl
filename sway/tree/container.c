@@ -179,13 +179,6 @@ static void scene_rect_set_color(struct wlr_scene_rect *rect,
 	wlr_scene_rect_set_color(rect, premultiplied);
 }
 
-static void apply_corner_radius_to_buffer(struct wlr_scene_buffer *buffer,
-		int sx, int sy, void *user_data) {
-	float r = config->corner_radius;
-	float radius[4] = { r, r, r, r };
-	wlr_scene_buffer_set_corner_radius(buffer, radius);
-}
-
 void container_update(struct sway_container *con) {
 	struct border_colors *colors = container_get_current_colors(con);
 	float alpha = con->alpha;
@@ -217,11 +210,6 @@ void container_update(struct sway_container *con) {
 		vfx.corner_radius[2] = r;
 		vfx.corner_radius[3] = r;
 		wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
-	}
-
-	if (con->view) {
-		wlr_scene_node_for_each_buffer(&con->view->content_tree->node,
-			apply_corner_radius_to_buffer, NULL);
 	}
 
 	if (con->title_bar.title_text) {
