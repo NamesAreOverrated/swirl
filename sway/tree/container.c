@@ -210,10 +210,6 @@ void container_update(struct sway_container *con) {
 		vfx.corner_radius[1] = r;
 		vfx.corner_radius[2] = r;
 		vfx.corner_radius[3] = r;
-		vfx.inner_corner_radius[0] = fmaxf(0, r - fmaxf(vfx.border.thickness[0], vfx.border.thickness[3]));
-		vfx.inner_corner_radius[1] = fmaxf(0, r - fmaxf(vfx.border.thickness[0], vfx.border.thickness[1]));
-		vfx.inner_corner_radius[2] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[1]));
-		vfx.inner_corner_radius[3] = fmaxf(0, r - fmaxf(vfx.border.thickness[2], vfx.border.thickness[3]));
 		if (config->shadow_enabled) {
 			vfx.shadow.blur_sigma = (float)config->shadow_blur_radius;
 			vfx.shadow.opacity = config->shadow_opacity;

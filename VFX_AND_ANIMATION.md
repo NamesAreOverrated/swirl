@@ -675,3 +675,23 @@ so the box coordinates in output space and `gl_FragCoord.xy` are in the same
 orientation — both have Y = 0 at the top and Y increasing downward. The
 shader's `pos = gl_FragCoord.xy - u_box.xy` works correctly without any
 Y-coordinate adjustment.
+
+### 9. `scene_node_invisible` must be extended for every new VFX effect
+
+`scene_node_invisible()` is the early-out check used during render-list
+construction — if a node is "invisible", no entry is added and per-frame work is
+skipped. For VFX nodes it checks whether border _or_ shadow is active:
+
+```c
+} else if (node->type == WLR_SCENE_NODE_VFX) {
+    if (node->vfx == NULL) return true;
+    bool has_border = node->vfx->border.thickness[0] > 0 || ...;
+    bool has_shadow = node->vfx->shadow.blur_sigma > 0.0f &&
+        node->vfx->shadow.opacity > 0.0f &&
+        node->vfx->shadow.color[3] > 0.0f;
+    return !has_border && !has_shadow;
+}
+```
+
+Adding any new effect (e.g. glow, inner shadow, outline) requires extending this
+check so the node is not skipped when the effect is active.
