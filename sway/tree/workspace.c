@@ -1247,3 +1247,66 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 
 	return old_ws;
 }
+
+struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
+		struct sway_container *view, struct sway_container *target,
+		enum wlr_edges edge, bool after) {
+	if (view == target) {
+		return view->pending.workspace;
+	}
+
+	struct sway_workspace *old_ws = view->pending.workspace;
+	struct sway_container *view_col = view->pending.parent ?
+		container_toplevel_ancestor(view) : NULL;
+	struct sway_container *target_col = target->pending.parent ?
+		container_toplevel_ancestor(target) : NULL;
+
+	// Same column reorder
+	if (view_col && view_col == target_col) {
+		list_t *children = view_col->pending.children;
+		int vi = list_find(children, view);
+		int ti = list_find(children, target);
+		if (vi < 0 || ti < 0) return old_ws;
+		if (edge == WLR_EDGE_NONE) {
+			list_swap(children, vi, ti);
+		} else {
+			list_del(children, vi);
+			ti = list_find(children, target);
+			if (ti >= 0) list_insert(children, ti + after, view);
+		}
+		return old_ws;
+	}
+
+	// Detach view from its current column
+	struct sway_container *old_parent = view->pending.parent;
+	container_detach(view);
+	if (old_parent && old_parent->pending.children->length == 0) {
+		container_reap_empty(old_parent);
+	}
+
+	// Insert INTO target's column (TOP/BOTTOM edge)
+	if (target_col && (edge == WLR_EDGE_TOP || edge == WLR_EDGE_BOTTOM)) {
+		list_t *children = target_col->pending.children;
+		int ti = list_find(children, target);
+		if (ti >= 0) {
+			list_insert(children, ti + after, view);
+			view->pending.parent = target_col;
+			view->pending.workspace = target_col->pending.workspace;
+			container_for_each_child(view, set_workspace, NULL);
+		}
+		return old_ws;
+	}
+
+	// Insert as new column
+	int idx;
+	if (target_col) {
+		int ti = list_find(ws->tiling, target_col);
+		idx = (ti >= 0) ? ti + after : (after ? ws->tiling->length : 0);
+	} else {
+		idx = after ? ws->tiling->length : 0;
+	}
+
+	workspace_insert_column(ws, view, idx);
+
+	return old_ws;
+}

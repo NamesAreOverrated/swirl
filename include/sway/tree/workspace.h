@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_ext_workspace_v1.h>
+#include <wlr/util/edges.h>
 #include "sway/config.h"
 #include "sway/tree/container.h"
 #include "sway/tree/node.h"
@@ -141,6 +142,10 @@ struct sway_container *workspace_insert_tiling(struct sway_workspace *workspace,
 
 struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 		struct sway_container *con, int index);
+
+struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
+		struct sway_container *view, struct sway_container *target,
+		enum wlr_edges edge, bool after);
 
 void workspace_remove_gaps(struct sway_workspace *ws);
 
