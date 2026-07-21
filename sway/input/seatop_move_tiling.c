@@ -287,6 +287,15 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 			return;
 		}
 		con = con->pending.parent;
+		if (!con) {
+			break;
+		}
+		// Stop at column boundary — column-level edge detection is handled
+		// by the surface fallback below. The thresholds were computed from
+		// the view's coordinates and don't match the column's orientation.
+		if (!con->pending.parent && con->pending.layout == L_VERT) {
+			break;
+		}
 	}
 
 	// Use the hovered view - but we must be over the actual surface
