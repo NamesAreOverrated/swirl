@@ -13,6 +13,7 @@
 #include "sway/output.h"
 #include "sway/server.h"
 #include "sway/scene_descriptor.h"
+#include "sway/tree/container.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
 #include "log.h"
@@ -87,17 +88,20 @@ static enum wlr_edges find_edge(struct sway_container *cont,
 		return WLR_EDGE_NONE;
 	}
 
+	struct wlr_box screen_box;
+	container_get_screen_box(cont, &screen_box);
+
 	enum wlr_edges edge = 0;
-	if (cursor->cursor->x < cont->pending.x + cont->pending.border_thickness) {
+	if (cursor->cursor->x < screen_box.x + cont->pending.border_thickness) {
 		edge |= WLR_EDGE_LEFT;
 	}
-	if (cursor->cursor->y < cont->pending.y + cont->pending.border_thickness) {
+	if (cursor->cursor->y < screen_box.y + cont->pending.border_thickness) {
 		edge |= WLR_EDGE_TOP;
 	}
-	if (cursor->cursor->x >= cont->pending.x + cont->pending.width - cont->pending.border_thickness) {
+	if (cursor->cursor->x >= screen_box.x + screen_box.width - cont->pending.border_thickness) {
 		edge |= WLR_EDGE_RIGHT;
 	}
-	if (cursor->cursor->y >= cont->pending.y + cont->pending.height - cont->pending.border_thickness) {
+	if (cursor->cursor->y >= screen_box.y + screen_box.height - cont->pending.border_thickness) {
 		edge |= WLR_EDGE_BOTTOM;
 	}
 

@@ -227,6 +227,11 @@ bool container_is_floating(struct sway_container *container);
 void container_get_box(struct sway_container *container, struct wlr_box *box);
 
 /**
+ * Get a container's box in absolute screen coordinates via the scene graph.
+ */
+void container_get_screen_box(struct sway_container *container, struct wlr_box *box);
+
+/**
  * Move a floating container by the specified amount.
  */
 void container_floating_translate(struct sway_container *con, double x_amount,

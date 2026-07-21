@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
+#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -1037,6 +1038,17 @@ bool container_is_floating(struct sway_container *container) {
 void container_get_box(struct sway_container *container, struct wlr_box *box) {
 	box->x = container->pending.x;
 	box->y = container->pending.y;
+	box->width = container->pending.width;
+	box->height = container->pending.height;
+}
+
+void container_get_screen_box(struct sway_container *container, struct wlr_box *box) {
+	int abs_x = 0, abs_y = 0;
+	if (container->scene_tree) {
+		wlr_scene_node_coords(&container->scene_tree->node, &abs_x, &abs_y);
+	}
+	box->x = abs_x;
+	box->y = abs_y;
 	box->width = container->pending.width;
 	box->height = container->pending.height;
 }
