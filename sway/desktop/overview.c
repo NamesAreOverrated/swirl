@@ -20,11 +20,19 @@
 #include "sway/tree/root.h"
 #include "sway/tree/workspace.h"
 
+struct overview_thumbnail {
+	struct wl_list link;
+	struct wlr_scene_buffer *sb;
+	int w, h;
+	float origin_y;
+};
+
 static bool overview_active = false;
 
 static struct {
 	struct wlr_scene_rect *bg;
-	struct wlr_scene_buffer *scene_buffer;
+	struct wl_list thumbnails;
+	int n_thumbnails;
 } state;
 
 bool overview_is_active(void) {
@@ -69,7 +77,7 @@ static void collect_buffers(struct wlr_scene_node *node,
 
 static void render_buffers(struct wlr_render_pass *pass,
 		struct wlr_renderer *renderer, struct wlr_scene_node *node,
-		int base_x, int base_y, float scale) {
+		int base_x, int base_y, float scale, int off_x, int off_y) {
 	if (!node->enabled) {
 		return;
 	}
@@ -80,7 +88,7 @@ static void render_buffers(struct wlr_render_pass *pass,
 		struct wlr_scene_node *child;
 		int ny = base_y + node->y;
 		wl_list_for_each(child, &tree->children, link) {
-			render_buffers(pass, renderer, child, nx, ny, scale);
+			render_buffers(pass, renderer, child, nx, ny, scale, off_x, off_y);
 		}
 		return;
 	}
@@ -97,21 +105,10 @@ static void render_buffers(struct wlr_render_pass *pass,
 		if (sb->dst_width > 0) w = (int)(sb->dst_width * scale);
 		if (sb->dst_height > 0) h = (int)(sb->dst_height * scale);
 
-		if (config->border != B_NONE) {
-			int bt = (int)(config->border_thickness * scale);
-			if (bt > 0) {
-				const float *col = config->border_colors.unfocused.border;
-				wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-					.box = { .x = px - bt, .y = py - bt,
-						.width = w + 2 * bt, .height = h + 2 * bt },
-					.color = { col[0], col[1], col[2], col[3] },
-				});
-			}
-		}
-
 		wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options){
 			.texture = cb->texture,
-			.dst_box = { .x = px, .y = py, .width = w, .height = h },
+			.dst_box = { .x = px - off_x, .y = py - off_y,
+				.width = w, .height = h },
 			.transform = WL_OUTPUT_TRANSFORM_NORMAL,
 			.alpha = &sb->opacity,
 		});
@@ -130,13 +127,16 @@ void overview_toggle(void) {
 	}
 
 	if (overview_active) {
+		struct overview_thumbnail *t, *tmp;
+		wl_list_for_each_safe(t, tmp, &state.thumbnails, link) {
+			wlr_scene_node_destroy(&t->sb->node);
+			wl_list_remove(&t->link);
+			free(t);
+		}
+		state.n_thumbnails = 0;
 		if (state.bg) {
 			wlr_scene_node_destroy(&state.bg->node);
 			state.bg = NULL;
-		}
-		if (state.scene_buffer) {
-			wlr_scene_node_destroy(&state.scene_buffer->node);
-			state.scene_buffer = NULL;
 		}
 		wlr_scene_node_set_enabled(&root->layers.overview->node, false);
 		overview_active = false;
@@ -147,56 +147,13 @@ void overview_toggle(void) {
 	if (!ws) return;
 
 	float scale = output->wlr_output->scale;
-	int min_x = INT_MAX, min_y = INT_MAX, max_x = INT_MIN, max_y = INT_MIN;
-	struct wlr_scene_node *child;
-	wl_list_for_each(child, &ws->layers.tiling->children, link) {
-		collect_buffers(child, 0, 0, scale, &min_x, &min_y, &max_x, &max_y);
-	}
-	if (max_x < min_x || max_y < min_y) {
-		sway_log(SWAY_DEBUG, "overview: no buffers found");
-		return;
-	}
-	int ws_w = max_x - min_x;
-	int ws_h = max_y - min_y;
-	sway_log(SWAY_INFO, "overview: bounds %dx%d (phys), scale %.2f", ws_w, ws_h, scale);
-
 	struct wlr_renderer *renderer = output->wlr_output->renderer;
 	struct wlr_allocator *alloc = output->wlr_output->allocator;
-
 	const struct wlr_drm_format *fmt = NULL;
 	if (output->wlr_output->swapchain) {
 		fmt = &output->wlr_output->swapchain->format;
 	}
 	if (!fmt) return;
-
-	struct wlr_swapchain *swapchain = wlr_swapchain_create(alloc, ws_w, ws_h, fmt);
-	if (!swapchain) return;
-
-	struct wlr_buffer *buffer = wlr_swapchain_acquire(swapchain);
-	if (!buffer) { wlr_swapchain_destroy(swapchain); return; }
-
-	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
-		renderer, buffer, &(struct wlr_buffer_pass_options){0});
-	if (!pass) {
-		wlr_buffer_unlock(buffer);
-		wlr_swapchain_destroy(swapchain);
-		return;
-	}
-
-	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-		.box = { .x = 0, .y = 0, .width = ws_w, .height = ws_h },
-		.color = {0.05, 0.05, 0.1, 1},
-	});
-
-	wl_list_for_each(child, &ws->layers.tiling->children, link) {
-		render_buffers(pass, renderer, child, 0, 0, scale);
-	}
-
-	if (!wlr_render_pass_submit(pass)) {
-		wlr_buffer_unlock(buffer);
-		wlr_swapchain_destroy(swapchain);
-		return;
-	}
 
 	int ow = (int)(output->wlr_output->width / scale);
 	int oh = (int)(output->wlr_output->height / scale);
@@ -209,27 +166,126 @@ void overview_toggle(void) {
 		wlr_scene_node_set_position(&state.bg->node, ox, oy);
 	}
 
-	int tw = (int)(ws_w / scale);
-	int th = (int)(ws_h / scale);
-	float max_w = ow * 0.7f;
-	float max_h = oh * 0.7f;
-	if (tw > max_w || th > max_h) {
-		float fit = fminf(max_w / tw, max_h / th);
-		tw = (int)(tw * fit);
-		th = (int)(th * fit);
-	}
-	if (tw < 1) tw = 1;
-	if (th < 1) th = 1;
+	wl_list_init(&state.thumbnails);
+	state.n_thumbnails = 0;
 
-	state.scene_buffer = wlr_scene_buffer_create(root->layers.overview, buffer);
-	if (state.scene_buffer) {
-		wlr_scene_buffer_set_dest_size(state.scene_buffer, tw, th);
-		wlr_scene_node_set_position(&state.scene_buffer->node,
-			ox + ow/2 - tw/2, oy + oh/2 - th/2);
+	struct wlr_scene_node *container_node;
+	wl_list_for_each(container_node, &ws->layers.tiling->children, link) {
+		int min_x = INT_MAX, min_y = INT_MAX,
+			max_x = INT_MIN, max_y = INT_MIN;
+		collect_buffers(container_node, 0, 0, scale,
+			&min_x, &min_y, &max_x, &max_y);
+		if (max_x < min_x || max_y < min_y) continue;
+
+		int cw = max_x - min_x;
+		int ch = max_y - min_y;
+
+		int bt = 0;
+		if (config->border == B_PIXEL || config->border == B_NORMAL) {
+			bt = (int)(config->border_thickness * scale);
+		}
+		int scw = cw + 2 * bt;
+		int sch = ch + 2 * bt;
+
+		struct wlr_swapchain *sc = wlr_swapchain_create(alloc, scw, sch, fmt);
+		if (!sc) continue;
+		struct wlr_buffer *buf = wlr_swapchain_acquire(sc);
+		if (!buf) { wlr_swapchain_destroy(sc); continue; }
+
+		struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
+			renderer, buf, &(struct wlr_buffer_pass_options){0});
+		if (!pass) {
+			wlr_buffer_unlock(buf);
+			wlr_swapchain_destroy(sc);
+			continue;
+		}
+
+		wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+			.box = { .x = 0, .y = 0, .width = scw, .height = sch },
+			.color = {0.05, 0.05, 0.1, 1},
+		});
+
+		if (bt > 0) {
+			const float *col = config->border_colors.unfocused.border;
+			wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+				.box = { .x = 0, .y = 0, .width = scw, .height = sch },
+				.color = { col[0], col[1], col[2], col[3] },
+			});
+		}
+
+		render_buffers(pass, renderer, container_node, 0, 0, scale,
+			min_x - bt, min_y - bt);
+
+		if (!wlr_render_pass_submit(pass)) {
+			wlr_buffer_unlock(buf);
+			wlr_swapchain_destroy(sc);
+			continue;
+		}
+
+		struct overview_thumbnail *t = calloc(1, sizeof(*t));
+		if (!t) { wlr_buffer_unlock(buf); wlr_swapchain_destroy(sc); continue; }
+		t->w = scw;
+		t->h = sch;
+		t->origin_y = (float)min_y / scale;
+		t->sb = wlr_scene_buffer_create(root->layers.overview, buf);
+		wlr_buffer_unlock(buf);
+		wlr_swapchain_destroy(sc);
+
+		if (t->sb) {
+			wl_list_insert(state.thumbnails.prev, &t->link);
+			state.n_thumbnails++;
+		} else {
+			free(t);
+		}
 	}
 
-	wlr_buffer_unlock(buffer);
-	wlr_swapchain_destroy(swapchain);
+	int n = state.n_thumbnails;
+	if (n == 0) {
+		wlr_scene_node_set_enabled(&root->layers.overview->node, true);
+		overview_active = true;
+		return;
+	}
+
+	float min_oy = INFINITY, max_bottom = 0, max_th = 0, sum_w = 0;
+	struct overview_thumbnail *t;
+	wl_list_for_each(t, &state.thumbnails, link) {
+		float tw = (float)t->w / scale;
+		float th = (float)t->h / scale;
+		if (th > max_th) max_th = th;
+		sum_w += tw;
+		if (t->origin_y < min_oy) min_oy = t->origin_y;
+		float bot = t->origin_y + th;
+		if (bot > max_bottom) max_bottom = bot;
+	}
+
+	float gap = 8.0f;
+	float avail_w = ow * 0.9f;
+	float avail_h = oh * 0.85f;
+	float denom = sum_w + gap * (n - 1);
+	float fit = 1.0f;
+	if (max_th > 0 && denom > 0) {
+		fit = fminf(1.0f, fminf(avail_h / max_th, avail_w / denom));
+	}
+	float y_span = (max_bottom - min_oy) * fit;
+	if (y_span > avail_h) {
+		fit *= avail_h / y_span;
+		y_span = avail_h;
+	}
+
+	float total_w = denom * fit;
+	float start_x = ox + (ow - total_w) / 2.0f;
+	float overview_oy = oy + (oh - y_span) / 2.0f;
+
+	wl_list_for_each(t, &state.thumbnails, link) {
+		float tw = (float)t->w / scale * fit;
+		float th = (float)t->h / scale * fit;
+		float ty = overview_oy + (t->origin_y - min_oy) * fit;
+
+		wlr_scene_buffer_set_dest_size(t->sb, (int)tw, (int)th);
+		wlr_scene_node_set_position(&t->sb->node,
+			(int)start_x, (int)ty);
+		start_x += tw + gap * fit;
+	}
 
 	wlr_scene_node_set_enabled(&root->layers.overview->node, true);
 	overview_active = true;
