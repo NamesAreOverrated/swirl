@@ -1047,6 +1047,7 @@ struct sway_container *workspace_insert_tiling(struct sway_workspace *workspace,
 		container_add_child(col, con);
 		col->width_fraction = layout_get_default_width(workspace);
 		con->height_fraction = 1.0;
+		con->pending.height = workspace_height_fraction(workspace, 1.0);
 		con = col;
 	}
 	workspace_insert_tiling_direct(workspace, con, index);

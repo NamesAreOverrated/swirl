@@ -95,6 +95,11 @@ char *cmd_results_to_json(list_t *res_list);
 void container_resize_tiled(struct sway_container *parent, uint32_t axis,
 		int amount);
 
+void tiled_resize_horizontal_px(struct sway_container *con, uint32_t edge,
+		double delta_px);
+void tiled_resize_vertical_px(struct sway_container *con, uint32_t edge,
+		double delta_px);
+
 struct sway_container *container_find_resize_parent(struct sway_container *con,
 		uint32_t edge);
 

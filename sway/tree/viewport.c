@@ -8,7 +8,6 @@
 #include "sway/output.h"
 #include "sway/tree/animation.h"
 #include "sway/tree/container.h"
-#include "sway/tree/layout.h"
 #include "sway/tree/view.h"
 #include "sway/tree/viewport.h"
 #include "sway/tree/workspace.h"
@@ -97,13 +96,6 @@ void viewport_arrange_windows(struct sway_container *col) {
 
 	struct sway_workspace *ws = col->pending.workspace;
 	double gap = ws ? ws->gaps_inner : 0;
-
-	for (int i = 0; i < col->pending.children->length; ++i) {
-		struct sway_container *child = col->pending.children->items[i];
-		double hf = child->height_fraction;
-		if (hf <= 0) hf = 1.0;
-		child->pending.height = workspace_height_fraction(ws, hf);
-	}
 
 	double y = 0;
 	for (int i = 0; i < col->pending.children->length; ++i) {

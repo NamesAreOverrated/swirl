@@ -24,6 +24,16 @@ double workspace_height_fraction(struct sway_workspace *ws, double fraction) {
 	return (ws->height - ws->gaps_inner) * fraction;
 }
 
+double workspace_width_to_fraction(struct sway_workspace *ws, double pixel_width) {
+	double divisor = ws->width - ws->gaps_inner;
+	return divisor > 0 ? pixel_width / divisor : 0;
+}
+
+double workspace_height_to_fraction(struct sway_workspace *ws, double pixel_height) {
+	double divisor = ws->height - ws->gaps_inner;
+	return divisor > 0 ? pixel_height / divisor : 0;
+}
+
 double workspace_clamp_column_width(struct sway_workspace *ws, double pixel_width) {
 	double default_w = workspace_width_fraction(ws, DEFAULT_COLUMN_WIDTH_FRACTION);
 	double min_w = workspace_width_fraction(ws, 0.2);
@@ -37,6 +47,6 @@ void column_set_width_px(struct sway_container *col, double width_px) {
 	col->pending.width = width_px;
 	struct sway_workspace *ws = col->pending.workspace;
 	if (ws) {
-		col->width_fraction = ws->width > 0 ? width_px / ws->width : 0;
+		col->width_fraction = workspace_width_to_fraction(ws, width_px);
 	}
 }

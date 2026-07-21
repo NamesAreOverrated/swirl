@@ -1528,6 +1528,8 @@ void container_replace(struct sway_container *container,
 		container_detach(container);
 		replacement->width_fraction = width_fraction;
 		replacement->height_fraction = height_fraction;
+		replacement->pending.width = container->pending.width;
+		replacement->pending.height = container->pending.height;
 	}
 	if (scratchpad) {
 		root_scratchpad_add_container(replacement, ws);

@@ -417,10 +417,12 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 	// Handle tiling resize via mod
 	if (cont && !is_floating_or_child && mod_pressed && mod_resize_btn_pressed &&
 			state == WL_POINTER_BUTTON_STATE_PRESSED) {
+		struct wlr_box screen_box;
+		container_get_screen_box(cont, &screen_box);
 		edge = 0;
-		edge |= cursor->cursor->x > cont->pending.x + cont->pending.width / 2 ?
+		edge |= cursor->cursor->x > screen_box.x + screen_box.width / 2 ?
 			WLR_EDGE_RIGHT : WLR_EDGE_LEFT;
-		edge |= cursor->cursor->y > cont->pending.y + cont->pending.height / 2 ?
+		edge |= cursor->cursor->y > screen_box.y + screen_box.height / 2 ?
 			WLR_EDGE_BOTTOM : WLR_EDGE_TOP;
 
 		const char *image = NULL;
