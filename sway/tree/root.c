@@ -54,6 +54,7 @@ struct sway_root *root_create(struct wl_display *wl_display) {
 	root->layers.popup = alloc_scene_tree(root->layer_tree, &failed);
 	root->layers.seat = alloc_scene_tree(root->layer_tree, &failed);
 	root->layers.session_lock = alloc_scene_tree(root->layer_tree, &failed);
+	root->layers.overview = alloc_scene_tree(root->layer_tree, &failed);
 
 	if (!failed && !scene_descriptor_assign(&root->layers.seat->node,
 			SWAY_SCENE_DESC_NON_INTERACTIVE, (void *)1)) {
@@ -67,6 +68,7 @@ struct sway_root *root_create(struct wl_display *wl_display) {
 	}
 
 	wlr_scene_node_set_enabled(&root->staging->node, false);
+	wlr_scene_node_set_enabled(&root->layers.overview->node, false);
 
 	root->output_layout = wlr_output_layout_create(wl_display);
 	wl_list_init(&root->all_outputs);

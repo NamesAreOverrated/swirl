@@ -22,6 +22,7 @@ sway_sources = files(
 	'desktop/transaction.c',
 	'desktop/xdg_shell.c',
 	'desktop/launcher.c',
+	'desktop/overview.c',
 
 	'input/input-manager.c',
 	'input/cursor.c',
@@ -77,6 +78,7 @@ sway_sources = files(
 	'commands/mark.c',
 	'commands/max_render_time.c',
 	'commands/opacity.c',
+	'commands/overview.c',
 	'commands/include.c',
 	'commands/input.c',
 	'commands/layout.c',

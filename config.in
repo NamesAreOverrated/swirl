@@ -153,6 +153,9 @@ output * bg @datadir@/backgrounds/sway/Sway_Wallpaper_Blue_1920x1080.png fill
     # Make the current focus fullscreen
     bindsym $mod+f fullscreen
 
+    # Toggle workspace overview
+    bindsym $mod+o overview
+
     # Toggle the current focus between tiling and floating mode
     bindsym $mod+Shift+space floating toggle
 
