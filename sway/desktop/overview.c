@@ -473,8 +473,9 @@ void overview_toggle(void) {
       if (bpad < 1)
         bpad = 1;
       wlr_scene_buffer_set_dest_size(t->badge_sb, bsz, bsz);
+      double scroll_y = t->con ? t->con->current.scroll_y : 0;
       wlr_scene_node_set_position(&t->badge_sb->node, (int)start_x + bpad,
-                                  (int)(ty + t->con->current.scroll_y * fit) + bpad);
+                                  (int)(ty + scroll_y * fit) + bpad);
       wlr_scene_node_raise_to_top(&t->badge_sb->node);
     }
 

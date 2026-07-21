@@ -200,6 +200,7 @@ static int on_anim_tick(void *data) {
 	if (running) {
 		wl_event_source_timer_update(timer, 16);
 	} else {
+		wl_event_source_remove(timer);
 		timer = NULL;
 	}
 	return 0;
