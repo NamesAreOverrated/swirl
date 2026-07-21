@@ -9,6 +9,7 @@
 #include <wlr/types/wlr_keyboard_group.h>
 #include <xkbcommon/xkbcommon-names.h>
 #include "sway/commands.h"
+#include "sway/desktop/overview.h"
 #include "sway/input/input-manager.h"
 #include "sway/input/keyboard.h"
 #include "sway/input/seat.h"
@@ -451,6 +452,14 @@ static void handle_key_event(struct sway_keyboard *keyboard,
 	// Identify new keycode, raw keysym(s), and translated keysym(s)
 	struct key_info keyinfo;
 	update_keyboard_state(keyboard, event->keycode, event->state, &keyinfo);
+
+	if (overview_is_active() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED &&
+			keyinfo.translated_keysyms_len > 0 && !keyboard->wlr->group) {
+		if (overview_handle_key(keyinfo.translated_keysyms[0])) {
+			free(device_identifier);
+			return;
+		}
+	}
 
 	bool handled = false;
 	// Identify active release binding

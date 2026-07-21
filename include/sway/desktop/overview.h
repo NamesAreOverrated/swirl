@@ -2,8 +2,10 @@
 #define _SWAY_OVERVIEW_H
 
 #include <stdbool.h>
+#include <xkbcommon/xkbcommon.h>
 
 bool overview_is_active(void);
 void overview_toggle(void);
+bool overview_handle_key(xkb_keysym_t sym);
 
 #endif

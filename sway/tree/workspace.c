@@ -1200,3 +1200,50 @@ void workspace_move_to_output(struct sway_workspace *workspace,
 	workspace_output_raise_priority(workspace, old_output, output);
 	ipc_event_workspace(NULL, workspace, "move");
 }
+
+struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
+		struct sway_container *con, int index) {
+	struct sway_workspace *old_ws = con->pending.workspace;
+
+	if (con->pending.parent) {
+		struct sway_container *old_parent = con->pending.parent;
+		container_detach(con);
+		if (old_parent->pending.children->length == 0) {
+			container_reap_empty(old_parent);
+		}
+	}
+
+	if (con->view) {
+		struct sway_container *col = container_create(NULL);
+		col->pending.layout = L_VERT;
+		col->pending.workspace = ws;
+		container_add_child(col, con);
+		con->height_fraction = 1.0;
+		con = col;
+	}
+
+	if (con->pending.workspace && con->pending.workspace != ws) {
+		container_detach(con);
+	}
+
+	if (index < 0) index = 0;
+	if (index > ws->tiling->length) index = ws->tiling->length;
+
+	int cur = list_find(ws->tiling, con);
+	if (cur >= 0) {
+		if (cur == index) return old_ws;
+		list_del(ws->tiling, cur);
+		if (cur < index) index--;
+	}
+
+	list_insert(ws->tiling, index, con);
+	con->pending.parent = NULL;
+	con->pending.workspace = ws;
+	container_for_each_child(con, set_workspace, NULL);
+	container_handle_fullscreen_reparent(con);
+	workspace_update_representation(ws);
+	node_set_dirty(&ws->node);
+	node_set_dirty(&con->node);
+
+	return old_ws;
+}

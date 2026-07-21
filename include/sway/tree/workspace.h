@@ -139,6 +139,9 @@ void workspace_insert_tiling_direct(struct sway_workspace *workspace,
 struct sway_container *workspace_insert_tiling(struct sway_workspace *workspace,
 		struct sway_container *con, int index);
 
+struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
+		struct sway_container *con, int index);
+
 void workspace_remove_gaps(struct sway_workspace *ws);
 
 void workspace_add_gaps(struct sway_workspace *ws);
