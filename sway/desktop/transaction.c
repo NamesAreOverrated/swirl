@@ -600,6 +600,7 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
     wlr_scene_node_set_position(&col->scene_tree->node, col->current.x,
                                 col->current.y);
     wlr_scene_node_reparent(&col->scene_tree->node, ws->layers.tiling);
+    wlr_scene_node_raise_to_top(&col->scene_tree->node);
     wlr_scene_node_set_enabled(&col->scene_tree->node, true);
 
     if (!col->view && col->current.children &&
