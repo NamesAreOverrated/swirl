@@ -1,6 +1,7 @@
 #include <limits.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/util/edges.h>
+#include "log.h"
 #include "sway/desktop/transaction.h"
 #include "sway/input/cursor.h"
 #include "sway/input/seat.h"
@@ -189,14 +190,14 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 			cursor->cursor->x, cursor->cursor->y, &surface, &sx, &sy);
 
 	if (!node) {
-		// Eg. hovered over a layer surface such as swaybar
+		sway_log(SWAY_DEBUG, "DRAG: no node under cursor");
 		set_target_node(e, NULL);
 		e->target_edge = WLR_EDGE_NONE;
 		return;
 	}
 
 	if (node->type == N_WORKSPACE) {
-		// Empty workspace
+		sway_log(SWAY_DEBUG, "DRAG: empty workspace");
 		set_target_node(e, node);
 		e->target_edge = WLR_EDGE_NONE;
 
@@ -210,6 +211,7 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	struct sway_container *con = node->sway_container;
 	if (workspace_num_tiling_views(e->con->pending.workspace) == 1 &&
 			con->pending.workspace == e->con->pending.workspace) {
+		sway_log(SWAY_DEBUG, "DRAG: only child in workspace, deny");
 		set_target_node(e, NULL);
 		e->target_edge = WLR_EDGE_NONE;
 		return;
@@ -227,8 +229,7 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	if (!surface && !container_has_ancestor(con, e->con) &&
 			split_titlebar(node, e->con, cursor->cursor,
 				&drop_box, &e->insert_after_target)) {
-		// Don't allow dropping over the source container's titlebar
-		// to give users a chance to cancel a drag operation.
+		sway_log(SWAY_DEBUG, "DRAG: titlebar drop split_target=%d", con == e->con);
 		if (con == e->con) {
 			set_target_node(e, NULL);
 		} else {
@@ -248,9 +249,14 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	int thresh_left = con->pending.content_x + DROP_LAYOUT_BORDER;
 	int thresh_right = con->pending.content_x +
 		con->pending.content_width - DROP_LAYOUT_BORDER;
+	sway_log(SWAY_DEBUG, "DRAG: thresh t=%d b=%d l=%d r=%d cur=(%.0f,%.0f)",
+		thresh_top, thresh_bottom, thresh_left, thresh_right,
+		cursor->cursor->x, cursor->cursor->y);
 	while (con) {
 		enum wlr_edges edge = WLR_EDGE_NONE;
 		enum sway_container_layout layout = container_parent_layout(con);
+		sway_log(SWAY_DEBUG, "DRAG: ancestor loop con=%p view=%d layout=%d",
+			(void*)con, !!con->view, layout);
 		struct wlr_box box;
 		node_get_box(node_get_parent(&con->node), &box);
 		if (layout == L_HORIZ || layout == L_TABBED) {
@@ -277,9 +283,13 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 			}
 		}
 		if (edge) {
-			set_target_node(e, node_get_parent(&con->node));
+			struct sway_node *parent = node_get_parent(&con->node);
+			sway_log(SWAY_DEBUG, "DRAG: ancestor edge=%d parent_type=%d",
+				edge, parent ? (int)parent->type : -1);
+			set_target_node(e, parent);
 			if (e->target_node && (e->target_node == &e->con->node ||
 					node_has_ancestor(e->target_node, &e->con->node))) {
+				sway_log(SWAY_DEBUG, "DRAG: target is self/ancestor, bumping to con's parent");
 				set_target_node(e, node_get_parent(&e->con->node));
 			}
 			e->target_edge = edge;
@@ -290,10 +300,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		if (!con) {
 			break;
 		}
-		// Stop at column boundary — column-level edge detection is handled
-		// by the surface fallback below. The thresholds were computed from
-		// the view's coordinates and don't match the column's orientation.
 		if (!con->pending.parent && con->pending.layout == L_VERT) {
+			sway_log(SWAY_DEBUG, "DRAG: column boundary reached, stopping ancestor walk");
 			break;
 		}
 	}
@@ -302,6 +310,7 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	con = node->sway_container;
 	if (!con->view || !con->view->surface || node == &e->con->node
 			|| node_has_ancestor(node, &e->con->node)) {
+		sway_log(SWAY_DEBUG, "DRAG: surface fallback skip (no view/self/ancestor)");
 		set_target_node(e, NULL);
 		e->target_edge = WLR_EDGE_NONE;
 		return;
@@ -333,6 +342,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		e->target_edge = WLR_EDGE_NONE;
 	}
 
+	sway_log(SWAY_DEBUG, "DRAG: surface fallback edge=%d closest_dist=%zu thickness=%zu",
+		e->target_edge, closest_dist, thickness);
 	set_target_node(e, node);
 	resize_box(&drop_box, e->target_edge, thickness);
 	update_indicator(e, &drop_box);
@@ -352,6 +363,7 @@ static void finalize_move(struct sway_seat *seat) {
 	struct seatop_move_tiling_event *e = seat->seatop_data;
 
 	if (!e->target_node) {
+		sway_log(SWAY_DEBUG, "DRAG: finalize no target");
 		seatop_begin_default(seat);
 		return;
 	}
@@ -363,10 +375,15 @@ static void finalize_move(struct sway_seat *seat) {
 		target_node->sway_workspace :
 		target_node->sway_container->pending.workspace;
 
+	sway_log(SWAY_DEBUG, "DRAG: finalize con=%p target_type=%d target_edge=%d split=%d",
+		(void*)con, target_node->type, e->target_edge, e->split_target);
+
 	if (target_node->type == N_WORKSPACE && e->target_edge == WLR_EDGE_NONE) {
+		sway_log(SWAY_DEBUG, "DRAG: finalize -> workspace_add_tiling (empty ws)");
 		con = workspace_add_tiling(new_ws, con);
 	} else {
 		struct sway_container *target = target_node->sway_container;
+		sway_log(SWAY_DEBUG, "DRAG: finalize -> workspace_insert_window target=%p", (void*)target);
 		if (e->split_target) {
 			workspace_insert_window(new_ws, con, target,
 				WLR_EDGE_TOP, e->insert_after_target);
