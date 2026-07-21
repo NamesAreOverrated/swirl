@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <time.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/util/edges.h>
 #include "log.h"
@@ -186,6 +187,7 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	struct wlr_surface *surface = NULL;
 	double sx, sy;
 	struct sway_cursor *cursor = seat->cursor;
+
 	struct sway_node *node = node_at_coords(seat,
 			cursor->cursor->x, cursor->cursor->y, &surface, &sx, &sy);
 
@@ -217,9 +219,25 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		return;
 	}
 
+	// Compute layout→screen offset for this container.
+	// Used to convert pending coords into screen space for edge detection
+	// and indicator positioning (accounts for viewport + column + scroll).
+	double off_x = 0, off_y = 0;
+	struct sway_workspace *ws = con->pending.workspace;
+	if (ws && ws->output) {
+		double tiling_off_x = ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
+		double tiling_off_y = ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
+		struct sway_container *col = container_toplevel_ancestor(con);
+		double col_px = (col && !col->view) ? col->pending.x : 0;
+		double col_py = (col && !col->view) ? col->pending.y : 0;
+		double col_sy = (col && !col->view) ? col->pending.scroll_y : 0;
+		off_x = tiling_off_x + col_px;
+		off_y = tiling_off_y + col_py - col_sy;
+	}
+
 	struct wlr_box drop_box = {
-		.x = con->pending.content_x,
-		.y = con->pending.content_y,
+		.x = con->pending.content_x + off_x,
+		.y = con->pending.content_y + off_y,
 		.width = con->pending.content_width,
 		.height = con->pending.content_height,
 	};
@@ -243,15 +261,15 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 
 	// Traverse the ancestors, trying to find a layout container perpendicular
 	// to the edge. Eg. close to the top or bottom of a horiz layout.
-	int thresh_top = con->pending.content_y + DROP_LAYOUT_BORDER;
+	int thresh_top = con->pending.content_y + DROP_LAYOUT_BORDER + off_y;
 	int thresh_bottom = con->pending.content_y +
-		con->pending.content_height - DROP_LAYOUT_BORDER;
-	int thresh_left = con->pending.content_x + DROP_LAYOUT_BORDER;
+		con->pending.content_height - DROP_LAYOUT_BORDER + off_y;
+	int thresh_left = con->pending.content_x + DROP_LAYOUT_BORDER + off_x;
 	int thresh_right = con->pending.content_x +
-		con->pending.content_width - DROP_LAYOUT_BORDER;
-	sway_log(SWAY_DEBUG, "DRAG: thresh t=%d b=%d l=%d r=%d cur=(%.0f,%.0f)",
+		con->pending.content_width - DROP_LAYOUT_BORDER + off_x;
+	sway_log(SWAY_DEBUG, "DRAG: thresh t=%d b=%d l=%d r=%d cur=(%.0f,%.0f) off=(%.0f,%.0f)",
 		thresh_top, thresh_bottom, thresh_left, thresh_right,
-		cursor->cursor->x, cursor->cursor->y);
+		cursor->cursor->x, cursor->cursor->y, off_x, off_y);
 	while (con) {
 		enum wlr_edges edge = WLR_EDGE_NONE;
 		enum sway_container_layout layout = container_parent_layout(con);
@@ -259,6 +277,11 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 			(void*)con, !!con->view, layout);
 		struct wlr_box box;
 		node_get_box(node_get_parent(&con->node), &box);
+		// Container boxes (e.g. column) are in tiling-layer space; convert to screen.
+		if (ws && ws->output && node_get_parent(&con->node)->type == N_CONTAINER) {
+			box.x += ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
+			box.y += ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
+		}
 		if (layout == L_HORIZ || layout == L_TABBED) {
 			if (cursor->cursor->y < thresh_top) {
 				edge = WLR_EDGE_TOP;
@@ -316,24 +339,26 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		return;
 	}
 
-	// Find the closest edge
+	// Find the closest edge (pending coords converted to screen via off_x/off_y)
 	size_t thickness = fmin(con->pending.content_width, con->pending.content_height) * 0.3;
 	size_t closest_dist = INT_MAX;
 	size_t dist;
+	double con_sx = con->pending.x + off_x;
+	double con_sy = con->pending.y + off_y;
 	e->target_edge = WLR_EDGE_NONE;
-	if ((dist = cursor->cursor->y - con->pending.y) < closest_dist) {
+	if ((dist = cursor->cursor->y - con_sy) < closest_dist) {
 		closest_dist = dist;
 		e->target_edge = WLR_EDGE_TOP;
 	}
-	if ((dist = cursor->cursor->x - con->pending.x) < closest_dist) {
+	if ((dist = cursor->cursor->x - con_sx) < closest_dist) {
 		closest_dist = dist;
 		e->target_edge = WLR_EDGE_LEFT;
 	}
-	if ((dist = con->pending.x + con->pending.width - cursor->cursor->x) < closest_dist) {
+	if ((dist = con_sx + con->pending.width - cursor->cursor->x) < closest_dist) {
 		closest_dist = dist;
 		e->target_edge = WLR_EDGE_RIGHT;
 	}
-	if ((dist = con->pending.y + con->pending.height - cursor->cursor->y) < closest_dist) {
+	if ((dist = con_sy + con->pending.height - cursor->cursor->y) < closest_dist) {
 		closest_dist = dist;
 		e->target_edge = WLR_EDGE_BOTTOM;
 	}
@@ -347,6 +372,7 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	set_target_node(e, node);
 	resize_box(&drop_box, e->target_edge, thickness);
 	update_indicator(e, &drop_box);
+
 }
 
 static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
@@ -388,8 +414,15 @@ static void finalize_move(struct sway_seat *seat) {
 			workspace_insert_window(new_ws, con, target,
 				WLR_EDGE_TOP, e->insert_after_target);
 		} else {
-			int after = e->target_edge != WLR_EDGE_TOP
-				&& e->target_edge != WLR_EDGE_LEFT;
+			int after;
+			if (e->target_edge == WLR_EDGE_NONE) {
+				struct sway_container *t = target_node->sway_container;
+				after = seat->cursor->cursor->y
+					>= t->pending.y + t->pending.height / 2;
+			} else {
+				after = e->target_edge != WLR_EDGE_TOP
+					&& e->target_edge != WLR_EDGE_LEFT;
+			}
 			workspace_insert_window(new_ws, con, target,
 				e->target_edge, after);
 		}

@@ -124,6 +124,11 @@ void workspace_unwrap_children(struct sway_workspace *ws,
 
 void workspace_detach(struct sway_workspace *workspace);
 
+struct sway_container *workspace_create_new_column(struct sway_workspace *ws,
+		struct sway_container *view, double width_px, double height_px);
+struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
+		struct sway_container *view, int index);
+
 struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		struct sway_container *con);
 

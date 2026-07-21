@@ -940,6 +940,38 @@ void workspace_detach(struct sway_workspace *workspace) {
 	node_set_dirty(&output->node);
 }
 
+struct sway_container *workspace_create_new_column(struct sway_workspace *ws,
+		struct sway_container *view, double width_px, double height_px) {
+	struct sway_container *col = container_create(NULL);
+	col->pending.layout = L_VERT;
+	col->pending.workspace = ws;
+	container_add_child(col, view);
+
+	if (width_px < 0) {
+		width_px = ws->width;
+	}
+	column_set_width_px(col, width_px);
+
+	if (height_px < 0) {
+		height_px = ws->height;
+		view->height_fraction = 1.0;
+	} else {
+		double uh = ws->height - ws->current_gaps.top - ws->current_gaps.bottom;
+		view->height_fraction = uh > 0 ? height_px / uh : 0;
+	}
+	view->pending.height = height_px;
+
+	node_set_dirty(&col->node);
+	return col;
+}
+
+struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
+		struct sway_container *view, int index) {
+	double rem_w = workspace_clamp_column_width(ws,
+		workspace_view_remaining_width(ws, index - 1));
+	return workspace_create_new_column(ws, view, rem_w, -1);
+}
+
 struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		struct sway_container *con) {
 	if (con->pending.workspace) {
@@ -949,25 +981,17 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 			container_reap_empty(old_parent);
 		}
 	}
-	bool is_new_col = false;
+
 	if (con->view) {
-		struct sway_container *col = container_create(NULL);
-		col->pending.workspace = workspace;
-		col->pending.layout = L_VERT;
-		container_add_child(col, con);
-
-		con->pending.height = workspace_height_fraction(workspace, 1.0);
-		con->height_fraction = 1.0;
-
-		con = col;
-		is_new_col = true;
+		con = workspace_create_new_column_at(workspace, con, -1);
+	} else if (con->pending.workspace != workspace) {
+		container_detach(con);
 	}
 
 	// Insert after the focused column
 	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_node *node = seat_get_focus_inactive(seat, &workspace->node);
 	int idx = workspace->tiling->length;
-	int start_idx = -1;
 	if (node && node->type == N_CONTAINER
 			&& !container_is_floating_or_child(node->sway_container)) {
 		struct sway_container *focus_col =
@@ -975,13 +999,7 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		int found = list_find(workspace->tiling, focus_col);
 		if (found >= 0) {
 			idx = found + 1;
-			start_idx = found;
 		}
-	}
-	if (is_new_col) {
-		double col_w = workspace_clamp_column_width(workspace,
-			workspace_view_remaining_width(workspace, start_idx));
-		column_set_width_px(con, col_w);
 	}
 	list_insert(workspace->tiling, idx, con);
 
@@ -1218,12 +1236,7 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 	}
 
 	if (con->view) {
-		struct sway_container *col = container_create(NULL);
-		col->pending.layout = L_VERT;
-		col->pending.workspace = ws;
-		container_add_child(col, con);
-		con->height_fraction = 1.0;
-		con = col;
+		con = workspace_create_new_column_at(ws, con, index);
 	}
 
 	if (con->pending.workspace && con->pending.workspace != ws) {
@@ -1263,10 +1276,8 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 	}
 
 	struct sway_workspace *old_ws = view->pending.workspace;
-	struct sway_container *view_col = view->pending.parent ?
-		container_toplevel_ancestor(view) : NULL;
-	struct sway_container *target_col = target->pending.parent ?
-		container_toplevel_ancestor(target) : NULL;
+	struct sway_container *view_col = container_toplevel_ancestor(view);
+	struct sway_container *target_col = container_toplevel_ancestor(target);
 
 	sway_log(SWAY_DEBUG, "DRAG: insert_window view=%p target=%p edge=%d after=%d "
 		"view_col=%p target_col=%p same=%d",
@@ -1291,17 +1302,32 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 		return old_ws;
 	}
 
+	// Solo-view column: just move the column itself in ws->tiling
+	if (view_col && view_col != target_col &&
+			(edge == WLR_EDGE_LEFT || edge == WLR_EDGE_RIGHT) &&
+			view_col->pending.children->length == 1 &&
+			view_col->pending.children->items[0] == view) {
+		int idx;
+		if (target_col) {
+			int ti = list_find(ws->tiling, target_col);
+			idx = (ti >= 0) ? ti + after : (after ? ws->tiling->length : 0);
+		} else {
+			idx = after ? ws->tiling->length : 0;
+		}
+		sway_log(SWAY_DEBUG, "DRAG: insert_window solo-col move view_col=%p idx=%d",
+			(void*)view_col, idx);
+		workspace_insert_column(ws, view_col, idx);
+		return old_ws;
+	}
+
 	// Detach view from its current column
 	struct sway_container *old_parent = view->pending.parent;
 	sway_log(SWAY_DEBUG, "DRAG: insert_window detach view old_parent=%p", (void*)old_parent);
 	container_detach(view);
-	if (old_parent && old_parent->pending.children->length == 0) {
-		sway_log(SWAY_DEBUG, "DRAG: insert_window reap empty column");
-		container_reap_empty(old_parent);
-	}
 
 	// Insert INTO target's column (TOP/BOTTOM edge)
-	if (target_col && (edge == WLR_EDGE_TOP || edge == WLR_EDGE_BOTTOM)) {
+	if (target_col && (edge == WLR_EDGE_TOP || edge == WLR_EDGE_BOTTOM
+			|| edge == WLR_EDGE_NONE)) {
 		list_t *children = target_col->pending.children;
 		int ti = list_find(children, target);
 		sway_log(SWAY_DEBUG, "DRAG: insert_window into-target-col ti=%d nchild=%d", ti, children->length);
@@ -1311,7 +1337,7 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 			view->pending.workspace = target_col->pending.workspace;
 			container_for_each_child(view, set_workspace, NULL);
 		}
-		return old_ws;
+		goto cleanup;
 	}
 
 	// Insert as new column
@@ -1326,6 +1352,11 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 	sway_log(SWAY_DEBUG, "DRAG: insert_window -> new column at idx=%d (target_col=%p, after=%d)",
 		idx, (void*)target_col, after);
 	workspace_insert_column(ws, view, idx);
+
+cleanup:
+	if (old_parent && old_parent->pending.children->length == 0) {
+		container_reap_empty(old_parent);
+	}
 
 	return old_ws;
 }
