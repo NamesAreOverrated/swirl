@@ -417,6 +417,7 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 	}
 
 	// 3. Handle slider (first off-screen column at or after col_idx)
+	bool slider_resized = false;
 	sway_log(SWAY_DEBUG, "[grow]   step3 start: remaining=%.4f", remaining);
 	if (remaining > 1) {
 		int slider_idx = -1;
@@ -440,6 +441,7 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 			slider->width_fraction = workspace_width_to_fraction(ws, new_w);
 			node_set_dirty(&slider->node);
 			remaining = 0;
+			slider_resized = true;
 		}
 		if (remaining > 1) {
 			if (vs >= 0) {
@@ -482,7 +484,7 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 	}
 
 	int ret;
-	if (col_idx < ws->tiling->length) ret = col_idx;
+	if (col_idx < ws->tiling->length && slider_resized) ret = col_idx;
 	else if (col_idx - 1 >= 0) ret = col_idx - 1;
 	else ret = -1;
 	sway_log(SWAY_DEBUG, "[grow]   return focus_idx=%d", ret);

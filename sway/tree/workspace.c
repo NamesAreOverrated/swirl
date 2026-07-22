@@ -1429,14 +1429,20 @@ void workspace_update_focused_column_idx(struct sway_workspace *ws) {
 	struct sway_seat *seat = input_manager_current_seat();
 	if (!seat) {
 		ws->focused_column_idx = -1;
+		sway_log(SWAY_DEBUG, "[upd_focus_col_idx] no seat -> -1");
 		return;
 	}
 	struct sway_container *con = seat_get_focused_container(seat);
 	if (!con || con->pending.workspace != ws) {
 		ws->focused_column_idx = -1;
+		sway_log(SWAY_DEBUG, "[upd_focus_col_idx] con=%p ws_match=%d -> -1",
+			(void *)con, con ? con->pending.workspace == ws : -1);
 		return;
 	}
 	con = container_toplevel_ancestor(con);
 	int idx = list_find(ws->tiling, con);
+	sway_log(SWAY_DEBUG, "[upd_focus_col_idx] con=%p toplevel=%p idx=%d n=%d",
+		(void *)seat_get_focused_container(seat), (void *)con, idx,
+		ws->tiling->length);
 	ws->focused_column_idx = idx;
 }

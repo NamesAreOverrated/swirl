@@ -98,8 +98,9 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		return;
 	}
 	int focus_idx = ws->focused_column_idx >= 0 ? ws->focused_column_idx : col_idx;
-	sway_log(SWAY_DEBUG, "[resize] col_idx=%d focus_idx=%d n_cols=%d vp=[%.0f, %.0f]",
-		col_idx, focus_idx, ws->tiling->length,
+	sway_log(SWAY_DEBUG, "[resize] col_idx=%d raw_focused_column_idx=%d "
+		"focus_idx=%d n_cols=%d vp=[%.0f, %.0f]",
+		col_idx, ws->focused_column_idx, focus_idx, ws->tiling->length,
 		ws->viewport_x, ws->viewport_x + ws->width);
 
 	// Pre-change: scan visible columns and compute occupied width

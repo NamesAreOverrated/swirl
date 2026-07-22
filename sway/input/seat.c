@@ -1292,6 +1292,12 @@ void seat_set_focus_raw(struct sway_seat *seat, struct sway_node *node) {
 	} else {
 		seat_set_workspace_focus(seat, node, true);
 	}
+	if (node && node->type == N_CONTAINER) {
+		struct sway_workspace *ws = node->sway_container->pending.workspace;
+		if (ws) {
+			workspace_update_focused_column_idx(ws);
+		}
+	}
 	if (server.session_lock.lock) {
 		seat_set_focus_surface(seat, server.session_lock.lock->focused, false);
 	}
