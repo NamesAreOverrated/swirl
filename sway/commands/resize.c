@@ -137,7 +137,33 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 	}
 
 	int used[32] = {0};
-	for (int k = 0; k < n_candidates && remaining != 0; ++k) {
+
+	// Edge-adjacent sibling gets first absorption priority
+	if (remaining != 0) {
+		int edge_sib = -1;
+		if (edge & WLR_EDGE_LEFT) edge_sib = col_idx - 1;
+		if (edge & WLR_EDGE_RIGHT) edge_sib = col_idx + 1;
+		for (int ci = 0; ci < n_candidates; ++ci) {
+			if (candidates[ci] == edge_sib) {
+				used[ci] = 1;
+				struct sway_container *c = ws->tiling->items[edge_sib];
+				double orig = c->pending.width;
+				double new_cw = fmax(min_col_w, orig - remaining);
+				double absorbed = orig - new_cw;
+				remaining -= absorbed;
+				sway_log(SWAY_DEBUG, "[resize]   edge-sib col[%d]: orig=%.0f new=%.0f absorbed=%.0f remaining=%.0f",
+					edge_sib, orig, new_cw, absorbed, remaining);
+				c->pending.width = new_cw;
+				c->width_fraction = workspace_width_to_fraction(ws, new_cw);
+				node_set_dirty(&c->node);
+				break;
+			}
+		}
+	}
+
+	// Farthest-first for non-edge-drag (keyboard, mod+right-click)
+	if (!(edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT))) {
+		for (int k = 0; k < n_candidates && remaining != 0; ++k) {
 		int farthest = -1, farthest_dist = -1;
 		for (int ci = 0; ci < n_candidates; ++ci) {
 			if (used[ci]) continue;
@@ -160,6 +186,7 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		c->pending.width = new_cw;
 		c->width_fraction = workspace_width_to_fraction(ws, new_cw);
 		node_set_dirty(&c->node);
+		}
 	}
 
 	if (remaining > 0) {
