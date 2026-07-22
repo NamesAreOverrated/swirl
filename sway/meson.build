@@ -218,6 +218,7 @@ sway_sources = files(
 
 	'tree/arrange.c',
 	'tree/animation.c',
+	'tree/column.c',
 	'tree/container.c',
 	'tree/layout.c',
 	'tree/node.c',

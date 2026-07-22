@@ -1006,8 +1006,15 @@ void view_unmap(struct sway_view *view) {
 		}
 	}
 
+	// Pre-check if column will become empty (before view is detached)
+	bool will_reap = parent && !parent->view && parent->pending.children
+		&& parent->pending.children->length == 1;
+
 	container_begin_destroy(view->container);
-	if (parent) {
+
+	if (will_reap) {
+		column_remove(parent, true);
+	} else if (parent) {
 		container_reap_empty(parent);
 	} else if (ws) {
 		workspace_consider_destroy(ws);

@@ -41,11 +41,7 @@ struct cmd_results *cmd_column_take(int argc, char **argv) {
 		container_add_child(con, right);
 	}
 
-	int ridx = list_find(ws->tiling, right);
-	if (ridx >= 0) {
-		list_del(ws->tiling, ridx);
-	}
-	container_reap_empty(right);
+	column_remove(right, false);
 
 	node_set_dirty(&con->node);
 	arrange_workspace(ws);

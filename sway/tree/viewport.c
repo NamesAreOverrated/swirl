@@ -316,3 +316,52 @@ void viewport_absorb_farthest(struct sway_workspace *ws,
 		node_set_dirty(&c->node);
 	}
 }
+
+void viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
+		double freed_width) {
+	if (!ws || ws->tiling->length == 0 || freed_width <= 1) {
+		return;
+	}
+
+	double remaining = freed_width;
+	double half = remaining / 2;
+
+	sway_log(SWAY_DEBUG, "[close-slide] col_idx=%d freed_width=%.0f "
+		"n_cols=%d", col_idx, freed_width, ws->tiling->length);
+
+	// Left neighbor gets half the freed space
+	if (col_idx - 1 >= 0 && half > 1) {
+		struct sway_container *c = ws->tiling->items[col_idx - 1];
+		sway_log(SWAY_DEBUG, "[close-slide]   left col %d: "
+			"w=%.0f + %.0f = %.0f", col_idx - 1,
+			c->pending.width, half, c->pending.width + half);
+		c->pending.width += half;
+		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
+		node_set_dirty(&c->node);
+		remaining -= half;
+	}
+
+	// Right neighbor gets the other half (or all remaining if no left)
+	if (col_idx < ws->tiling->length && remaining > 1) {
+		struct sway_container *c = ws->tiling->items[col_idx];
+		sway_log(SWAY_DEBUG, "[close-slide]   right col %d: "
+			"w=%.0f + %.0f = %.0f", col_idx,
+			c->pending.width, remaining, c->pending.width + remaining);
+		c->pending.width += remaining;
+		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
+		node_set_dirty(&c->node);
+		remaining = 0;
+	}
+
+	// Spillover (e.g. no right neighbor) goes back to left
+	if (remaining > 1 && col_idx - 1 >= 0) {
+		struct sway_container *c = ws->tiling->items[col_idx - 1];
+		sway_log(SWAY_DEBUG, "[close-slide]   left spillover: +%.0f", remaining);
+		c->pending.width += remaining;
+		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
+		node_set_dirty(&c->node);
+		remaining = 0;
+	}
+
+	sway_log(SWAY_DEBUG, "[close-slide] remaining=%.0f", remaining);
+}

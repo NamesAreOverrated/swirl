@@ -6,6 +6,8 @@
 
 void column_set_width_px(struct sway_container *col, double width_px);
 
+void column_remove(struct sway_container *col, bool grow_neighbors);
+
 static inline void column_set_width_fraction(struct sway_container *col,
 		double fraction) {
 	struct sway_workspace *ws = col->pending.workspace;
