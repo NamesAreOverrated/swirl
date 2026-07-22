@@ -74,11 +74,13 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		return;
 	}
 
+	double min_col_w = workspace_width_fraction(ws, config->min_column_width_fraction);
+
 	sway_log(SWAY_DEBUG, "[resize] con=%p col=%p col_idx=%d col_x=%.0f col_w=%.0f ws_width=%d vp_x=%.0f",
 		con, col, container_sibling_index(col),
 		col->pending.x, col->pending.width, ws->width, ws->viewport_x);
 
-	double new_w = fmax(MIN_SANE_W, fmin(col->pending.width + delta_px, ws->width));
+	double new_w = fmax(min_col_w, fmin(col->pending.width + delta_px, ws->width));
 	double real_delta = new_w - col->pending.width;
 	sway_log(SWAY_DEBUG, "[resize] delta_px=%.0f new_w=%.0f real_delta=%.0f",
 		delta_px, new_w, real_delta);
@@ -150,7 +152,7 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		int idx = candidates[farthest];
 		struct sway_container *c = ws->tiling->items[idx];
 		double orig = c->pending.width;
-		double new_cw = fmax(MIN_SANE_W, orig - remaining);
+		double new_cw = fmax(min_col_w, orig - remaining);
 		double absorbed = orig - new_cw;
 		remaining -= absorbed;
 		sway_log(SWAY_DEBUG, "[resize]   absorb col[%d]: orig=%.0f new=%.0f absorbed=%.0f remaining=%.0f",
@@ -158,6 +160,13 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		c->pending.width = new_cw;
 		c->width_fraction = workspace_width_to_fraction(ws, new_cw);
 		node_set_dirty(&c->node);
+	}
+
+	if (remaining > 0) {
+		sway_log(SWAY_DEBUG, "[resize]   cap growth: pull back by %.0f", remaining);
+		col->pending.width -= remaining;
+		col->width_fraction = workspace_width_to_fraction(ws, col->pending.width);
+		node_set_dirty(&col->node);
 	}
 
 	sway_log(SWAY_DEBUG, "[resize] arrange_workspace (remaining=%.0f)", remaining);
