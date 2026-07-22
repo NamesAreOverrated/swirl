@@ -1020,17 +1020,18 @@ void view_unmap(struct sway_view *view) {
 		workspace_consider_destroy(ws);
 	}
 
+	// Focus the surviving sibling — no viewport scroll,
+	// arrange_workspace handles viewport positioning below.
+	if (next_focus && !next_focus->node.destroying) {
+		seat_set_focus_raw(seat, &next_focus->node);
+	}
+
 	if (root->fullscreen_global) {
 		// Container may have been a child of the root fullscreen container
 		arrange_root();
 	} else if (ws && !ws->node.destroying) {
 		arrange_workspace(ws);
 		workspace_detect_urgent(ws);
-	}
-
-	// Focus the surviving sibling in the parent column
-	if (next_focus && !next_focus->node.destroying) {
-		seat_set_focus_container(seat, next_focus);
 	}
 
 	wl_list_for_each(seat, &server.input->seats, link) {

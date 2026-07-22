@@ -23,11 +23,13 @@ void handle_focus_viewport(struct sway_seat *seat,
 int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 		int exclude_idx, int *candidates, int max_cand, double *out_occupied);
 
+bool viewport_column_is_visible(struct sway_workspace *ws, int col_idx);
+
 void viewport_absorb_farthest(struct sway_workspace *ws,
 		int *candidates, int n_candidates, int focus_idx,
 		double *remaining, double min_col_w);
 
-void viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
+int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 		double freed_width);
 
 #endif

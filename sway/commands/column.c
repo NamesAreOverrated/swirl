@@ -6,6 +6,7 @@
 #include "sway/tree/workspace.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/layout.h"
+#include "sway/tree/viewport.h"
 #include "sway/input/seat.h"
 #include "sway/desktop/transaction.h"
 #include "log.h"
@@ -104,6 +105,42 @@ struct cmd_results *cmd_column_release(int argc, char **argv) {
 
 	node_set_dirty(&con->node);
 	node_set_dirty(&newcol->node);
+	arrange_workspace(ws);
+	transaction_commit_dirty();
+	return cmd_results_new(CMD_SUCCESS, NULL);
+}
+
+struct cmd_results *cmd_column_pop(int argc, char **argv) {
+	struct sway_container *con = config->handler_context.container;
+	if (!con || container_is_floating(con) ||
+			con->pending.fullscreen_mode != FULLSCREEN_NONE) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	con = container_toplevel_ancestor(con);
+	struct sway_workspace *ws = con->pending.workspace;
+	if (!ws || ws->tiling->length < 2) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	int idx = list_find(ws->tiling, con);
+	if (idx < 0) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	double col_w = con->pending.width;
+	int gaps = ws->gaps_inner;
+
+	list_del(ws->tiling, idx);
+	int focus_idx = viewport_grow_to_fill(ws, idx, col_w + gaps);
+	list_add(ws->tiling, con);
+
+	if (focus_idx >= 0 && focus_idx < ws->tiling->length) {
+		struct sway_seat *seat = input_manager_current_seat();
+		struct sway_container *target = ws->tiling->items[focus_idx];
+		seat_set_focus_raw(seat, &target->node);
+	}
+
 	arrange_workspace(ws);
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);

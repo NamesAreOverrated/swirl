@@ -247,9 +247,9 @@ static void handle_seat_node_destroy(struct wl_listener *listener, void *data) {
 		// value of seat->workspace.
 		if (seat->workspace == node->sway_workspace) {
 			struct sway_node *node = seat_get_focus_inactive(seat, &root->node);
-			seat_set_focus(seat, NULL);
+			seat_set_focus_raw(seat, NULL);
 			if (node) {
-				seat_set_focus(seat, node);
+				seat_set_focus_raw(seat, node);
 			} else {
 				seat->workspace = NULL;
 			}
@@ -311,7 +311,7 @@ static void handle_seat_node_destroy(struct wl_listener *listener, void *data) {
 		if (seat_get_focus(seat) == next_focus) {
 			seat_send_focus(next_focus, seat);
 		} else {
-			seat_set_focus(seat, next_focus);
+			seat_set_focus_raw(seat, next_focus);
 		}
 	} else {
 		// Setting focus_inactive
@@ -1127,7 +1127,8 @@ void seat_set_raw_focus(struct sway_seat *seat, struct sway_node *node) {
 	}
 }
 
-static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *node) {
+static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *node,
+		bool skip_viewport) {
 	struct sway_node *last_focus = seat_get_focus(seat);
 	if (last_focus == node) {
 		return;
@@ -1256,7 +1257,7 @@ static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *n
 		workspace_update_focused_column_idx(new_workspace);
 	}
 
-	if (container) {
+	if (!skip_viewport && container) {
 		handle_focus_viewport(seat, container);
 	}
 }
@@ -1266,13 +1267,30 @@ void seat_set_focus(struct sway_seat *seat, struct sway_node *node) {
 	if (seat->has_exclusive_layer) {
 		struct wlr_layer_surface_v1 *layer = seat->focused_layer;
 		seat_set_focus_layer(seat, NULL);
-		seat_set_workspace_focus(seat, node);
+		seat_set_workspace_focus(seat, node, false);
 		seat_set_focus_layer(seat, layer);
 	} else if (seat->focused_layer) {
 		seat_set_focus_layer(seat, NULL);
-		seat_set_workspace_focus(seat, node);
+		seat_set_workspace_focus(seat, node, false);
 	} else {
-		seat_set_workspace_focus(seat, node);
+		seat_set_workspace_focus(seat, node, false);
+	}
+	if (server.session_lock.lock) {
+		seat_set_focus_surface(seat, server.session_lock.lock->focused, false);
+	}
+}
+
+void seat_set_focus_raw(struct sway_seat *seat, struct sway_node *node) {
+	if (seat->has_exclusive_layer) {
+		struct wlr_layer_surface_v1 *layer = seat->focused_layer;
+		seat_set_focus_layer(seat, NULL);
+		seat_set_workspace_focus(seat, node, true);
+		seat_set_focus_layer(seat, layer);
+	} else if (seat->focused_layer) {
+		seat_set_focus_layer(seat, NULL);
+		seat_set_workspace_focus(seat, node, true);
+	} else {
+		seat_set_workspace_focus(seat, node, true);
 	}
 	if (server.session_lock.lock) {
 		seat_set_focus_surface(seat, server.session_lock.lock->focused, false);

@@ -117,6 +117,7 @@ static const struct cmd_handler config_handlers[] = {
 static const struct cmd_handler command_handlers[] = {
 	{ "allow_tearing", cmd_allow_tearing },
 	{ "border", cmd_border },
+	{ "column_pop", cmd_column_pop },
 	{ "column_release", cmd_column_release },
 	{ "column_take", cmd_column_take },
 	{ "create_output", cmd_create_output },

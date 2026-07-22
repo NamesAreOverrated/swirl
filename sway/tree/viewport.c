@@ -4,6 +4,7 @@
 #include <wlr/util/log.h>
 #include "log.h"
 #include "sway/desktop/transaction.h"
+#include "sway/config.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
 #include "sway/tree/animation.h"
@@ -247,8 +248,6 @@ void handle_focus_viewport(struct sway_seat *seat,
 
 int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 		int exclude_idx, int *candidates, int max_cand, double *out_occupied) {
-	double vp = ws->viewport_x;
-	double vp_end = vp + ws->width;
 	double sum = 0;
 	int n = 0;
 	int total_vis = 1;
@@ -257,29 +256,21 @@ int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 	sum += fc->pending.width;
 
 	for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
+		if (!viewport_column_is_visible(ws, i)) break;
 		struct sway_container *c = ws->tiling->items[i];
-		double ce = c->pending.x + c->pending.width;
-		if (c->pending.x >= vp - 0.5 && ce <= vp_end + 0.5) {
-			total_vis++;
-			sum += c->pending.width;
-			if (i != exclude_idx && n < max_cand)
-				candidates[n++] = i;
-		} else {
-			break;
-		}
+		total_vis++;
+		sum += c->pending.width;
+		if (i != exclude_idx && n < max_cand)
+			candidates[n++] = i;
 	}
 
 	for (int i = focus_idx - 1; i >= 0; --i) {
+		if (!viewport_column_is_visible(ws, i)) break;
 		struct sway_container *c = ws->tiling->items[i];
-		double ce = c->pending.x + c->pending.width;
-		if (c->pending.x >= vp - 0.5 && ce <= vp_end + 0.5) {
-			total_vis++;
-			sum += c->pending.width;
-			if (i != exclude_idx && n < max_cand)
-				candidates[n++] = i;
-		} else {
-			break;
-		}
+		total_vis++;
+		sum += c->pending.width;
+		if (i != exclude_idx && n < max_cand)
+			candidates[n++] = i;
 	}
 
 	if (exclude_idx != focus_idx && n < max_cand) {
@@ -288,6 +279,14 @@ int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 
 	*out_occupied = sum + ws->gaps_inner * (total_vis - 1);
 	return n;
+}
+
+bool viewport_column_is_visible(struct sway_workspace *ws, int col_idx) {
+	struct sway_container *c = ws->tiling->items[col_idx];
+	double vp = ws->viewport_x;
+	double vp_end = vp + ws->width;
+	return c->pending.x >= vp - 0.5
+		&& c->pending.x + c->pending.width <= vp_end + 0.5;
 }
 
 void viewport_absorb_farthest(struct sway_workspace *ws,
@@ -317,10 +316,10 @@ void viewport_absorb_farthest(struct sway_workspace *ws,
 	}
 }
 
-void viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
+int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 		double freed_width) {
 	if (!ws || ws->tiling->length == 0 || freed_width <= 1) {
-		return;
+		return -1;
 	}
 
 	double remaining = freed_width;
@@ -329,39 +328,77 @@ void viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 	sway_log(SWAY_DEBUG, "[close-slide] col_idx=%d freed_width=%.0f "
 		"n_cols=%d", col_idx, freed_width, ws->tiling->length);
 
-	// Left neighbor gets half the freed space
-	if (col_idx - 1 >= 0 && half > 1) {
+	for (int i = 0; i < ws->tiling->length; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		bool vis = viewport_column_is_visible(ws, i);
+		sway_log(SWAY_DEBUG, "[close-slide]   before: col[%d] x=%.0f w=%.0f "
+			"vis=%d vp=[%.0f, %.0f]", i, c->pending.x, c->pending.width,
+			vis, ws->viewport_x, ws->viewport_x + ws->width);
+	}
+
+	sway_log(SWAY_DEBUG, "[close-slide]   left_check: idx=%d exists=%d vis=%d",
+		col_idx - 1, col_idx - 1 >= 0,
+		col_idx - 1 >= 0 ? viewport_column_is_visible(ws, col_idx - 1) : 0);
+	sway_log(SWAY_DEBUG, "[close-slide]   right_check: idx=%d exists=%d vis=%d",
+		col_idx, col_idx < ws->tiling->length,
+		col_idx < ws->tiling->length ? viewport_column_is_visible(ws, col_idx) : 0);
+
+	double default_w = workspace_width_fraction(ws,
+			config->default_column_width_fraction);
+
+	// Left neighbor gets up to default_w (half share)
+	if (col_idx - 1 >= 0 && half > 1
+			&& viewport_column_is_visible(ws, col_idx - 1)) {
 		struct sway_container *c = ws->tiling->items[col_idx - 1];
+		double room = fmax(0, default_w - c->pending.width);
+		double give = fmin(room, half);
 		sway_log(SWAY_DEBUG, "[close-slide]   left col %d: "
-			"w=%.0f + %.0f = %.0f", col_idx - 1,
-			c->pending.width, half, c->pending.width + half);
-		c->pending.width += half;
+			"w=%.0f + %.0f (room=%.0f) = %.0f", col_idx - 1,
+			c->pending.width, give, room, c->pending.width + give);
+		c->pending.width += give;
 		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
 		node_set_dirty(&c->node);
-		remaining -= half;
+		remaining -= give;
 	}
 
-	// Right neighbor gets the other half (or all remaining if no left)
-	if (col_idx < ws->tiling->length && remaining > 1) {
+	// Right neighbor gets up to default_w (remaining share)
+	if (col_idx < ws->tiling->length && remaining > 1
+			&& viewport_column_is_visible(ws, col_idx)) {
 		struct sway_container *c = ws->tiling->items[col_idx];
+		double room = fmax(0, default_w - c->pending.width);
+		double give = fmin(room, remaining);
 		sway_log(SWAY_DEBUG, "[close-slide]   right col %d: "
-			"w=%.0f + %.0f = %.0f", col_idx,
-			c->pending.width, remaining, c->pending.width + remaining);
-		c->pending.width += remaining;
+			"w=%.0f + %.0f (room=%.0f) = %.0f", col_idx,
+			c->pending.width, give, room, c->pending.width + give);
+		c->pending.width += give;
 		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
 		node_set_dirty(&c->node);
-		remaining = 0;
+		remaining -= give;
 	}
 
-	// Spillover (e.g. no right neighbor) goes back to left
-	if (remaining > 1 && col_idx - 1 >= 0) {
+	// Left spillover (if right was off-screen or saturated)
+	if (remaining > 1 && col_idx - 1 >= 0
+			&& viewport_column_is_visible(ws, col_idx - 1)) {
 		struct sway_container *c = ws->tiling->items[col_idx - 1];
-		sway_log(SWAY_DEBUG, "[close-slide]   left spillover: +%.0f", remaining);
-		c->pending.width += remaining;
+		double room = fmax(0, default_w - c->pending.width);
+		double give = fmin(room, remaining);
+		sway_log(SWAY_DEBUG, "[close-slide]   left spillover: +%.0f (room=%.0f)", give, room);
+		c->pending.width += give;
 		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
 		node_set_dirty(&c->node);
-		remaining = 0;
+		remaining -= give;
+	}
+
+	for (int i = 0; i < ws->tiling->length; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		bool vis = viewport_column_is_visible(ws, i);
+		sway_log(SWAY_DEBUG, "[close-slide]   after: col[%d] x=%.0f w=%.0f "
+			"vis=%d", i, c->pending.x, c->pending.width, vis);
 	}
 
 	sway_log(SWAY_DEBUG, "[close-slide] remaining=%.0f", remaining);
+
+	if (col_idx < ws->tiling->length) return col_idx;
+	if (col_idx - 1 >= 0) return col_idx - 1;
+	return -1;
 }
