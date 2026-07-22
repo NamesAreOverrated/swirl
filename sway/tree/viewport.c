@@ -128,9 +128,9 @@ void viewport_compute_offset(struct sway_workspace *ws,
 	double total_w = total_extent_h(ws->tiling, gaps);
 	double max_x = total_w > area_width ? total_w - area_width : 0.0;
 
-	ws->viewport_x = edge_snap_horiz(active->pending.x,
+	ws->viewport_x = round(edge_snap_horiz(active->pending.x,
 		active->pending.width,
-		ws->viewport_x, area_width, max_x);
+		ws->viewport_x, area_width, max_x));
 	ws->viewport_y = 0;
 }
 
@@ -233,9 +233,15 @@ void handle_focus_viewport(struct sway_seat *seat,
 	// Horizontal — edge-snap column into viewport
 	double total_w = total_extent_h(ws->tiling, gaps);
 	double max_x = total_w > area_w ? total_w - area_w : 0.0;
-	ws->viewport_x = edge_snap_horiz(col->pending.x,
+	double old_vp_x = ws->viewport_x;
+	ws->viewport_x = round(edge_snap_horiz(col->pending.x,
 		col->pending.width,
-		ws->viewport_x, area_w, max_x);
+		ws->viewport_x, area_w, max_x));
+	sway_log(SWAY_DEBUG, "[focus_vp] vp_x: %.4f -> %.4f (delta=%.4f) "
+		"col[%d] x=%.4f w=%.4f total=%.4f area_w=%.4f max_x=%.4f",
+		old_vp_x, ws->viewport_x, ws->viewport_x - old_vp_x,
+		list_find(ws->tiling, col), col->pending.x,
+		col->pending.width, total_w, area_w, max_x);
 	ws->viewport_y = 0;
 
 	// Vertical — edge-snap focused window into column viewport
@@ -309,10 +315,26 @@ void viewport_absorb_farthest(struct sway_workspace *ws,
 		double orig = c->pending.width;
 		double new_cw = fmax(min_col_w, orig - *remaining);
 		double absorbed = orig - new_cw;
+		sway_log(SWAY_DEBUG, "[absorb]   col[%d]: %.4f -> %.4f (-%.4f) "
+			"remaining=%.4f", idx, orig, new_cw, absorbed,
+			*remaining - absorbed);
 		*remaining -= absorbed;
 		c->pending.width = new_cw;
 		c->width_fraction = workspace_width_to_fraction(ws, new_cw);
 		node_set_dirty(&c->node);
+	}
+}
+
+void viewport_visible_range(struct sway_workspace *ws, int *start, int *end) {
+	*start = -1;
+	*end = -1;
+	for (int i = 0; i < ws->tiling->length; ++i) {
+		if (viewport_column_is_visible(ws, i)) {
+			if (*start < 0) *start = i;
+			*end = i;
+		} else if (*start >= 0) {
+			break;
+		}
 	}
 }
 
@@ -323,82 +345,146 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 	}
 
 	double remaining = freed_width;
-	double half = remaining / 2;
-
-	sway_log(SWAY_DEBUG, "[close-slide] col_idx=%d freed_width=%.0f "
-		"n_cols=%d", col_idx, freed_width, ws->tiling->length);
-
-	for (int i = 0; i < ws->tiling->length; ++i) {
-		struct sway_container *c = ws->tiling->items[i];
-		bool vis = viewport_column_is_visible(ws, i);
-		sway_log(SWAY_DEBUG, "[close-slide]   before: col[%d] x=%.0f w=%.0f "
-			"vis=%d vp=[%.0f, %.0f]", i, c->pending.x, c->pending.width,
-			vis, ws->viewport_x, ws->viewport_x + ws->width);
-	}
-
-	sway_log(SWAY_DEBUG, "[close-slide]   left_check: idx=%d exists=%d vis=%d",
-		col_idx - 1, col_idx - 1 >= 0,
-		col_idx - 1 >= 0 ? viewport_column_is_visible(ws, col_idx - 1) : 0);
-	sway_log(SWAY_DEBUG, "[close-slide]   right_check: idx=%d exists=%d vis=%d",
-		col_idx, col_idx < ws->tiling->length,
-		col_idx < ws->tiling->length ? viewport_column_is_visible(ws, col_idx) : 0);
-
 	double default_w = workspace_width_fraction(ws,
 			config->default_column_width_fraction);
+	double min_w = workspace_width_fraction(ws,
+			config->min_column_width_fraction);
 
-	// Left neighbor gets up to default_w (half share)
-	if (col_idx - 1 >= 0 && half > 1
-			&& viewport_column_is_visible(ws, col_idx - 1)) {
-		struct sway_container *c = ws->tiling->items[col_idx - 1];
-		double room = fmax(0, default_w - c->pending.width);
-		double give = fmin(room, half);
-		sway_log(SWAY_DEBUG, "[close-slide]   left col %d: "
-			"w=%.0f + %.0f (room=%.0f) = %.0f", col_idx - 1,
-			c->pending.width, give, room, c->pending.width + give);
-		c->pending.width += give;
-		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
-		node_set_dirty(&c->node);
-		remaining -= give;
+	int vs, ve;
+	viewport_visible_range(ws, &vs, &ve);
+	sway_log(SWAY_DEBUG, "[grow] col_idx=%d freed=%.1f vis=[%d,%d] n=%d "
+		"default_w=%.1f min_w=%.1f",
+		col_idx, freed_width, vs, ve, ws->tiling->length, default_w, min_w);
+
+	for (int i = 0; i < ws->tiling->length; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		bool vis = viewport_column_is_visible(ws, i);
+		sway_log(SWAY_DEBUG, "[grow]   before: col[%d] x=%.1f w=%.1f vis=%d",
+			i, c->pending.x, c->pending.width, vis);
 	}
 
-	// Right neighbor gets up to default_w (remaining share)
-	if (col_idx < ws->tiling->length && remaining > 1
-			&& viewport_column_is_visible(ws, col_idx)) {
-		struct sway_container *c = ws->tiling->items[col_idx];
-		double room = fmax(0, default_w - c->pending.width);
+	// 1. Grow left visible neighbor up to default_w
+	if (col_idx - 1 >= 0 && col_idx - 1 >= vs && remaining > 1) {
+		struct sway_container *c = ws->tiling->items[col_idx - 1];
+		double orig = c->pending.width;
+		double room = fmax(0, default_w - orig);
 		double give = fmin(room, remaining);
-		sway_log(SWAY_DEBUG, "[close-slide]   right col %d: "
-			"w=%.0f + %.0f (room=%.0f) = %.0f", col_idx,
-			c->pending.width, give, room, c->pending.width + give);
-		c->pending.width += give;
-		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
-		node_set_dirty(&c->node);
-		remaining -= give;
+		sway_log(SWAY_DEBUG, "[grow]   step1 left col[%d]: %.4f -> %.4f (+%.4f) "
+			"room=%.4f rem=%.4f", col_idx - 1, orig, orig + give, give,
+			room, remaining - give);
+		if (give > 1) {
+			c->pending.width += give;
+			c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
+			node_set_dirty(&c->node);
+			remaining -= give;
+		} else {
+			sway_log(SWAY_DEBUG, "[grow]   step1 left col[%d]: give=%.4f too "
+				"small, skipped", col_idx - 1, give);
+		}
+	} else {
+		sway_log(SWAY_DEBUG, "[grow]   step1 left: skipped (idx=%d vs=%d "
+			"rem=%.4f)", col_idx - 1, vs, remaining);
 	}
 
-	// Left spillover (if right was off-screen or saturated)
-	if (remaining > 1 && col_idx - 1 >= 0
-			&& viewport_column_is_visible(ws, col_idx - 1)) {
-		struct sway_container *c = ws->tiling->items[col_idx - 1];
-		double room = fmax(0, default_w - c->pending.width);
-		double give = fmin(room, remaining);
-		sway_log(SWAY_DEBUG, "[close-slide]   left spillover: +%.0f (room=%.0f)", give, room);
-		c->pending.width += give;
-		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
-		node_set_dirty(&c->node);
-		remaining -= give;
+	// 2. Grow visible right neighbors (up to default_w each)
+	{
+		int grown = 0;
+		for (int i = col_idx; i < ws->tiling->length && remaining > 1; ++i) {
+			if (!viewport_column_is_visible(ws, i)) {
+				sway_log(SWAY_DEBUG, "[grow]   step2 stop at col[%d] (not vis)", i);
+				break;
+			}
+			struct sway_container *c = ws->tiling->items[i];
+			double orig = c->pending.width;
+			double room = fmax(0, default_w - orig);
+			double give = fmin(room, remaining);
+			sway_log(SWAY_DEBUG, "[grow]   step2 col[%d]: %.4f -> %.4f (+%.4f) "
+				"room=%.4f rem=%.4f", i, orig, orig + give, give,
+				room, remaining - give);
+			if (give > 1) {
+				c->pending.width += give;
+				c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
+				node_set_dirty(&c->node);
+				remaining -= give;
+				++grown;
+			} else {
+				sway_log(SWAY_DEBUG, "[grow]   step2 col[%d]: give=%.4f too "
+					"small, skipped", i, give);
+			}
+		}
+		sway_log(SWAY_DEBUG, "[grow]   step2 done: grown=%d remaining=%.4f",
+			grown, remaining);
+	}
+
+	// 3. Handle slider (first off-screen column at or after col_idx)
+	sway_log(SWAY_DEBUG, "[grow]   step3 start: remaining=%.4f", remaining);
+	if (remaining > 1) {
+		int slider_idx = -1;
+		for (int i = col_idx; i < ws->tiling->length; ++i) {
+			if (!viewport_column_is_visible(ws, i)) {
+				slider_idx = i;
+				break;
+			}
+		}
+		sway_log(SWAY_DEBUG, "[grow]   step3: slider_idx=%d remaining=%.4f "
+			"min_w=%.4f", slider_idx, remaining, min_w);
+
+		if (slider_idx >= 0 && remaining >= min_w) {
+			double orig = ((struct sway_container *)ws->tiling->items[slider_idx])->pending.width;
+			double new_w = remaining;
+			if (new_w < min_w) new_w = min_w;
+			sway_log(SWAY_DEBUG, "[grow]   step3: slider[%d]: %.4f -> %.4f "
+				"(delta=%.4f)", slider_idx, orig, new_w, new_w - orig);
+			struct sway_container *slider = ws->tiling->items[slider_idx];
+			slider->pending.width = new_w;
+			slider->width_fraction = workspace_width_to_fraction(ws, new_w);
+			node_set_dirty(&slider->node);
+			remaining = 0;
+		}
+		if (remaining > 1) {
+			if (vs >= 0) {
+				struct sway_container **items = (struct sway_container **)ws->tiling->items;
+				double min_vw = items[vs]->pending.width;
+				int smallest = vs;
+				for (int i = vs; i <= ve; ++i) {
+					double w = items[i]->pending.width;
+					if (w < min_vw) {
+						min_vw = w;
+						smallest = i;
+					}
+				}
+				double orig = items[smallest]->pending.width;
+				sway_log(SWAY_DEBUG, "[grow]   step3: dump to vis col[%d]: %.4f -> "
+					"%.4f (+%.4f)", smallest, orig, orig + remaining, remaining);
+				items[smallest]->pending.width += remaining;
+				items[smallest]->width_fraction =
+					workspace_width_to_fraction(ws, items[smallest]->pending.width);
+				node_set_dirty(&items[smallest]->node);
+				remaining = 0;
+			} else {
+				sway_log(SWAY_DEBUG, "[grow]   step3: no target, remaining=%.4f "
+					"lost", remaining);
+			}
+		}
+	}
+
+	if (remaining > 0 && remaining < 0.5) {
+		sway_log(SWAY_DEBUG, "[grow]   cleanup: zeroing sub-pixel remaining=%.4f",
+			remaining);
+		remaining = 0;
 	}
 
 	for (int i = 0; i < ws->tiling->length; ++i) {
 		struct sway_container *c = ws->tiling->items[i];
 		bool vis = viewport_column_is_visible(ws, i);
-		sway_log(SWAY_DEBUG, "[close-slide]   after: col[%d] x=%.0f w=%.0f "
-			"vis=%d", i, c->pending.x, c->pending.width, vis);
+		sway_log(SWAY_DEBUG, "[grow]   after: col[%d] x=%.4f w=%.4f vis=%d",
+			i, c->pending.x, c->pending.width, vis);
 	}
 
-	sway_log(SWAY_DEBUG, "[close-slide] remaining=%.0f", remaining);
-
-	if (col_idx < ws->tiling->length) return col_idx;
-	if (col_idx - 1 >= 0) return col_idx - 1;
-	return -1;
+	int ret;
+	if (col_idx < ws->tiling->length) ret = col_idx;
+	else if (col_idx - 1 >= 0) ret = col_idx - 1;
+	else ret = -1;
+	sway_log(SWAY_DEBUG, "[grow]   return focus_idx=%d", ret);
+	return ret;
 }

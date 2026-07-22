@@ -4,11 +4,11 @@
 #include "sway/tree/container.h"
 #include "sway/tree/viewport.h"
 
-void column_remove(struct sway_container *col, bool grow_neighbors) {
+int column_remove(struct sway_container *col, bool grow_neighbors) {
 	struct sway_workspace *ws = col->pending.workspace;
 	if (!ws) {
 		container_reap_empty(col);
-		return;
+		return -1;
 	}
 
 	int idx = list_find(ws->tiling, col);
@@ -16,10 +16,12 @@ void column_remove(struct sway_container *col, bool grow_neighbors) {
 
 	container_reap_empty(col);
 
-	if (grow_neighbors && idx >= 0 && ws->tiling->length > 0) {
-		double freed = col_w + ws->gaps_inner;
+	int focus_idx = -1;
+	if (idx >= 0 && grow_neighbors && ws->tiling->length > 0) {
+		double freed = col_w;
 		sway_log(SWAY_DEBUG, "[column_remove] idx=%d freed=%.0f grow=%d",
 			idx, freed, grow_neighbors);
-		viewport_grow_to_fill(ws, idx, freed);
+		focus_idx = viewport_grow_to_fill(ws, idx, freed);
 	}
+	return focus_idx;
 }

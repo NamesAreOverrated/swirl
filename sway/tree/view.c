@@ -1013,7 +1013,15 @@ void view_unmap(struct sway_view *view) {
 	container_begin_destroy(view->container);
 
 	if (will_reap) {
-		column_remove(parent, true);
+		int focus_col = column_remove(parent, true);
+		if (focus_col >= 0 && focus_col < ws->tiling->length) {
+			struct sway_container *col = ws->tiling->items[focus_col];
+			struct sway_container *view_focus =
+				seat_get_focus_inactive_view(seat, &col->node);
+			if (view_focus && !view_focus->node.destroying) {
+				next_focus = view_focus;
+			}
+		}
 	} else if (parent) {
 		container_reap_empty(parent);
 	} else if (ws) {

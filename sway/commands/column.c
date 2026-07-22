@@ -42,7 +42,7 @@ struct cmd_results *cmd_column_take(int argc, char **argv) {
 		container_add_child(con, right);
 	}
 
-	column_remove(right, false);
+	(void)column_remove(right, false);
 
 	node_set_dirty(&con->node);
 	arrange_workspace(ws);
@@ -131,14 +131,27 @@ struct cmd_results *cmd_column_pop(int argc, char **argv) {
 	double col_w = con->pending.width;
 	int gaps = ws->gaps_inner;
 
+	sway_log(SWAY_DEBUG, "[pop] con=%p idx=%d col_w=%.1f gaps=%d n=%d",
+		(void *)con, idx, col_w, gaps, ws->tiling->length);
+
 	list_del(ws->tiling, idx);
-	int focus_idx = viewport_grow_to_fill(ws, idx, col_w + gaps);
+	int focus_idx = viewport_grow_to_fill(ws, idx, col_w);
 	list_add(ws->tiling, con);
+
+	sway_log(SWAY_DEBUG, "[pop] after: focus_idx=%d n=%d con_idx=%d",
+		focus_idx, ws->tiling->length,
+		list_find(ws->tiling, con));
 
 	if (focus_idx >= 0 && focus_idx < ws->tiling->length) {
 		struct sway_seat *seat = input_manager_current_seat();
 		struct sway_container *target = ws->tiling->items[focus_idx];
+		sway_log(SWAY_DEBUG, "[pop] focusing col at [%d] = %p (w=%.1f x=%.1f)",
+			focus_idx, (void *)target, target->pending.width,
+			target->pending.x);
 		seat_set_focus_raw(seat, &target->node);
+	} else {
+		sway_log(SWAY_DEBUG, "[pop] focus_idx=%d out of range, no focus set",
+			focus_idx);
 	}
 
 	arrange_workspace(ws);
