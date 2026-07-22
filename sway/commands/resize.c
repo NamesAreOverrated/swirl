@@ -5,6 +5,7 @@
 #include "sway/tree/arrange.h"
 #include "sway/tree/layout.h"
 #include "sway/tree/view.h"
+#include "sway/tree/viewport.h"
 #include "sway/tree/workspace.h"
 #include "util.h"
 #include <errno.h>
@@ -90,8 +91,6 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		return;
 	}
 
-	double vp_start = ws->viewport_x;
-	double vp_end = vp_start + ws->width;
 	int col_idx = container_sibling_index(col);
 	if (col_idx < 0) {
 		sway_log(SWAY_DEBUG, "[resize] col_idx < 0, arrange and return");
@@ -99,25 +98,15 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		return;
 	}
 	int focus_idx = ws->focused_column_idx >= 0 ? ws->focused_column_idx : col_idx;
-	sway_log(SWAY_DEBUG, "[resize] vp=[%.0f, %.0f] col_idx=%d focus_idx=%d n_cols=%d",
-		vp_start, vp_end, col_idx, focus_idx, ws->tiling->length);
+	sway_log(SWAY_DEBUG, "[resize] col_idx=%d focus_idx=%d n_cols=%d vp=[%.0f, %.0f]",
+		col_idx, focus_idx, ws->tiling->length,
+		ws->viewport_x, ws->viewport_x + ws->width);
 
-	// Pre-change: identify absorb candidates and compute occupied width
+	// Pre-change: scan visible columns and compute occupied width
 	int candidates[32];
-	int n_candidates = 0;
-	double occupied = col->pending.width;
-	for (int i = 0; i < ws->tiling->length; ++i) {
-		struct sway_container *c = ws->tiling->items[i];
-		double ce = c->pending.x + c->pending.width;
-		int fully = c->pending.x >= vp_start - 0.5 && ce <= vp_end + 0.5;
-		sway_log(SWAY_DEBUG, "[resize]   col[%d] x=%.0f w=%.0f x_end=%.0f fully=%d",
-			i, c->pending.x, c->pending.width, ce, fully);
-		if (fully && i != col_idx) {
-			candidates[n_candidates++] = i;
-			occupied += c->pending.width;
-		}
-	}
-	occupied += ws->gaps_inner * n_candidates;
+	double occupied;
+	int n_candidates = viewport_scan_visible(ws, focus_idx, col_idx,
+		candidates, 32, &occupied);
 	sway_log(SWAY_DEBUG, "[resize] occupied=%.0f gap=%d n_candidates=%d",
 		occupied, ws->gaps_inner, n_candidates);
 
@@ -136,16 +125,11 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 			occupied, real_delta, ws->width, remaining);
 	}
 
-	int used[32] = {0};
-
-	// Edge-adjacent sibling gets first absorption priority
-	if (remaining != 0) {
-		int edge_sib = -1;
-		if (edge & WLR_EDGE_LEFT) edge_sib = col_idx - 1;
-		if (edge & WLR_EDGE_RIGHT) edge_sib = col_idx + 1;
+	// Edge-adjacent sibling absorbs first (mouse edge-drag)
+	if (remaining != 0 && (edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT))) {
+		int edge_sib = (edge & WLR_EDGE_LEFT) ? col_idx - 1 : col_idx + 1;
 		for (int ci = 0; ci < n_candidates; ++ci) {
 			if (candidates[ci] == edge_sib) {
-				used[ci] = 1;
 				struct sway_container *c = ws->tiling->items[edge_sib];
 				double orig = c->pending.width;
 				double new_cw = fmax(min_col_w, orig - remaining);
@@ -156,37 +140,19 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 				c->pending.width = new_cw;
 				c->width_fraction = workspace_width_to_fraction(ws, new_cw);
 				node_set_dirty(&c->node);
+				// Remove edge-sib from candidates
+				for (int j = ci; j < n_candidates - 1; ++j)
+					candidates[j] = candidates[j + 1];
+				n_candidates--;
 				break;
 			}
 		}
 	}
 
-	// Farthest-first for non-edge-drag (keyboard, mod+right-click)
-	if (!(edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT))) {
-		for (int k = 0; k < n_candidates && remaining != 0; ++k) {
-		int farthest = -1, farthest_dist = -1;
-		for (int ci = 0; ci < n_candidates; ++ci) {
-			if (used[ci]) continue;
-			int dist = abs(candidates[ci] - focus_idx);
-			if (dist > farthest_dist || (dist == farthest_dist && candidates[ci] > farthest)) {
-				farthest_dist = dist;
-				farthest = ci;
-			}
-		}
-		if (farthest < 0) break;
-		used[farthest] = 1;
-		int idx = candidates[farthest];
-		struct sway_container *c = ws->tiling->items[idx];
-		double orig = c->pending.width;
-		double new_cw = fmax(min_col_w, orig - remaining);
-		double absorbed = orig - new_cw;
-		remaining -= absorbed;
-		sway_log(SWAY_DEBUG, "[resize]   absorb col[%d]: orig=%.0f new=%.0f absorbed=%.0f remaining=%.0f",
-			idx, orig, new_cw, absorbed, remaining);
-		c->pending.width = new_cw;
-		c->width_fraction = workspace_width_to_fraction(ws, new_cw);
-		node_set_dirty(&c->node);
-		}
+	// Farthest-first absorption for non-edge-drag events (keyboard, mod+right-click)
+	if (!(edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT)) && remaining != 0 && n_candidates > 0) {
+		viewport_absorb_farthest(ws, candidates, n_candidates, focus_idx,
+			&remaining, min_col_w);
 	}
 
 	if (remaining > 0) {

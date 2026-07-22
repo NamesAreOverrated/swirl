@@ -8,6 +8,7 @@
 #include "sway/output.h"
 #include "sway/tree/animation.h"
 #include "sway/tree/container.h"
+#include "sway/tree/layout.h"
 #include "sway/tree/view.h"
 #include "sway/tree/viewport.h"
 #include "sway/tree/workspace.h"
@@ -242,4 +243,76 @@ void handle_focus_viewport(struct sway_seat *seat,
 	node_set_dirty(&ws->node);
 	node_set_dirty(&col->node);
 	transaction_commit_dirty();
+}
+
+int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
+		int exclude_idx, int *candidates, int max_cand, double *out_occupied) {
+	double vp = ws->viewport_x;
+	double vp_end = vp + ws->width;
+	double sum = 0;
+	int n = 0;
+	int total_vis = 1;
+
+	struct sway_container *fc = ws->tiling->items[focus_idx];
+	sum += fc->pending.width;
+
+	for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		double ce = c->pending.x + c->pending.width;
+		if (c->pending.x >= vp - 0.5 && ce <= vp_end + 0.5) {
+			total_vis++;
+			sum += c->pending.width;
+			if (i != exclude_idx && n < max_cand)
+				candidates[n++] = i;
+		} else {
+			break;
+		}
+	}
+
+	for (int i = focus_idx - 1; i >= 0; --i) {
+		struct sway_container *c = ws->tiling->items[i];
+		double ce = c->pending.x + c->pending.width;
+		if (c->pending.x >= vp - 0.5 && ce <= vp_end + 0.5) {
+			total_vis++;
+			sum += c->pending.width;
+			if (i != exclude_idx && n < max_cand)
+				candidates[n++] = i;
+		} else {
+			break;
+		}
+	}
+
+	if (exclude_idx != focus_idx && n < max_cand) {
+		candidates[n++] = focus_idx;
+	}
+
+	*out_occupied = sum + ws->gaps_inner * (total_vis - 1);
+	return n;
+}
+
+void viewport_absorb_farthest(struct sway_workspace *ws,
+		int *candidates, int n_candidates, int focus_idx,
+		double *remaining, double min_col_w) {
+	for (int k = 0; k < n_candidates && *remaining != 0; ++k) {
+		int farthest = -1, farthest_dist = -1;
+		for (int ci = 0; ci < n_candidates; ++ci) {
+			if (candidates[ci] < 0) continue;
+			int dist = abs(candidates[ci] - focus_idx);
+			if (dist > farthest_dist || (dist == farthest_dist && candidates[ci] > farthest)) {
+				farthest_dist = dist;
+				farthest = ci;
+			}
+		}
+		if (farthest < 0) break;
+		int idx = candidates[farthest];
+		candidates[farthest] = -1;  // mark used
+		struct sway_container *c = ws->tiling->items[idx];
+		double orig = c->pending.width;
+		double new_cw = fmax(min_col_w, orig - *remaining);
+		double absorbed = orig - new_cw;
+		*remaining -= absorbed;
+		c->pending.width = new_cw;
+		c->width_fraction = workspace_width_to_fraction(ws, new_cw);
+		node_set_dirty(&c->node);
+	}
 }

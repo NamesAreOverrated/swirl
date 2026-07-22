@@ -20,4 +20,11 @@ void column_scroll_vert_to(struct sway_container *col,
 void handle_focus_viewport(struct sway_seat *seat,
 		struct sway_container *container);
 
+int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
+		int exclude_idx, int *candidates, int max_cand, double *out_occupied);
+
+void viewport_absorb_farthest(struct sway_workspace *ws,
+		int *candidates, int n_candidates, int focus_idx,
+		double *remaining, double min_col_w);
+
 #endif

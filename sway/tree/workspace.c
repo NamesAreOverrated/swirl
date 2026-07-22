@@ -21,6 +21,7 @@
 #include "sway/tree/layout.h"
 #include "sway/tree/node.h"
 #include "sway/tree/view.h"
+#include "sway/tree/viewport.h"
 #include "sway/tree/workspace.h"
 #include "list.h"
 #include "util.h"
@@ -983,6 +984,8 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		}
 	}
 
+	bool was_view = con->view;
+
 	if (con->view) {
 		con = workspace_create_new_column_at(workspace, con, -1);
 	} else if (con->pending.workspace != workspace) {
@@ -1002,6 +1005,65 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 			idx = found + 1;
 		}
 	}
+
+	// Fit new column at default width within the viewport
+	if (was_view && workspace->tiling->length > 0) {
+		double default_w = workspace_width_fraction(workspace,
+			config->default_column_width_fraction);
+		double min_w = workspace_width_fraction(workspace,
+			config->min_column_width_fraction);
+		int focus_idx = workspace->focused_column_idx >= 0
+			? workspace->focused_column_idx : idx - 1;
+		if (focus_idx < 0) focus_idx = 0;
+		if (focus_idx >= workspace->tiling->length)
+			focus_idx = workspace->tiling->length - 1;
+
+		double occupied;
+		int vis_candidates[32];
+		int n_vis = viewport_scan_visible(workspace, focus_idx, -1,
+			vis_candidates, 32, &occupied);
+
+		double free = fmax(0, workspace->width - occupied - workspace->gaps_inner);
+		double target_w;
+
+		sway_log(SWAY_DEBUG, "[new-window] n_cols=%d focus_idx=%d n_vis=%d "
+			"occupied=%.0f default_w=%.0f min_w=%.0f free=%.0f",
+			workspace->tiling->length, focus_idx, n_vis,
+			occupied, default_w, min_w, free);
+
+		if (free >= default_w) {
+			target_w = default_w;
+			sway_log(SWAY_DEBUG, "[new-window] free >= default: %.0f >= %.0f -> target=default_w=%.0f",
+				free, default_w, default_w);
+		} else if (free >= min_w) {
+			target_w = free;
+			sway_log(SWAY_DEBUG, "[new-window] free >= min: %.0f >= %.0f -> target=free=%.0f",
+				free, min_w, free);
+		} else {
+			target_w = default_w;
+			double overflow = occupied + workspace->gaps_inner + target_w
+				- workspace->width;
+			sway_log(SWAY_DEBUG, "[new-window] default doesn't fit: overflow=%.0f "
+				"absorbing farthest", overflow);
+			if (overflow > 0 && n_vis > 0) {
+				viewport_absorb_farthest(workspace, vis_candidates, n_vis,
+					focus_idx, &overflow, min_w);
+				sway_log(SWAY_DEBUG, "[new-window] after farthest absorb remaining=%.0f",
+					overflow);
+			}
+			// New column absorbs any remainder (never below min_w)
+			if (overflow > 0) {
+				target_w = fmax(min_w, default_w - overflow);
+				sway_log(SWAY_DEBUG, "[new-window] shaving new col: "
+					"default_w=%.0f - overflow=%.0f -> target_w=%.0f",
+					default_w, overflow, target_w);
+			}
+		}
+
+		column_set_width_px(con, target_w);
+		sway_log(SWAY_DEBUG, "[new-window] col width set to %.0f", target_w);
+	}
+
 	list_insert(workspace->tiling, idx, con);
 
 	con->pending.workspace = workspace;
