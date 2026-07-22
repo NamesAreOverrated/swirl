@@ -1249,6 +1249,13 @@ static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *n
 		arrange_workspace(new_workspace);
 	}
 
+	if (last_workspace && last_workspace != new_workspace) {
+		last_workspace->focused_column_idx = -1;
+	}
+	if (new_workspace) {
+		workspace_update_focused_column_idx(new_workspace);
+	}
+
 	if (container) {
 		handle_focus_viewport(seat, container);
 	}

@@ -312,6 +312,8 @@ static void config_defaults(struct sway_config *config) {
 	config->shadow_color[1] = 0.0f;
 	config->shadow_color[2] = 0.0f;
 	config->shadow_color[3] = 1.0f;
+	config->default_column_width_fraction = 0.5f;
+	config->min_column_width_fraction = 0.2f;
 	config->hide_edge_borders = E_NONE;
 	config->hide_edge_borders_smart = ESMART_OFF;
 	config->hide_lone_tab = false;

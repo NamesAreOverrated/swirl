@@ -1,13 +1,12 @@
 #include "sway/tree/layout.h"
 #include "sway/tree/column.h"
+#include "sway/config.h"
 #include "sway/output.h"
 #include <wlr/types/wlr_scene.h>
 #include <math.h>
 
-#define DEFAULT_COLUMN_WIDTH_FRACTION 0.5
-
 double layout_get_default_width(struct sway_workspace *workspace) {
-	return DEFAULT_COLUMN_WIDTH_FRACTION;
+	return config->default_column_width_fraction;
 }
 
 double workspace_width_fraction(struct sway_workspace *ws, double fraction) {
@@ -35,8 +34,8 @@ double workspace_height_to_fraction(struct sway_workspace *ws, double pixel_heig
 }
 
 double workspace_clamp_column_width(struct sway_workspace *ws, double pixel_width) {
-	double default_w = workspace_width_fraction(ws, DEFAULT_COLUMN_WIDTH_FRACTION);
-	double min_w = workspace_width_fraction(ws, 0.2);
+	double default_w = workspace_width_fraction(ws, config->default_column_width_fraction);
+	double min_w = workspace_width_fraction(ws, config->min_column_width_fraction);
 	if (pixel_width >= default_w || pixel_width < min_w) {
 		return default_w;
 	}

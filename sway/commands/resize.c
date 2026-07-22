@@ -68,35 +68,100 @@ struct sway_container *container_find_resize_parent(struct sway_container *con,
 
 void tiled_resize_horizontal_px(struct sway_container *con,
                                        uint32_t edge, double delta_px) {
-  struct sway_container *col = container_toplevel_ancestor(con);
-  struct sway_workspace *ws = col->pending.workspace;
-  if (!ws) {
-    return;
-  }
+	struct sway_container *col = container_toplevel_ancestor(con);
+	struct sway_workspace *ws = col->pending.workspace;
+	if (!ws) {
+		return;
+	}
 
-  list_t *siblings = container_get_siblings(col);
-  int index = container_sibling_index(col);
-  struct sway_container *sib = NULL;
-  if ((edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT)) && siblings &&
-      siblings->length > 1) {
-    int sib_idx = index + ((edge & WLR_EDGE_RIGHT) ? 1 : -1);
-    if (sib_idx >= 0 && sib_idx < siblings->length) {
-      sib = siblings->items[sib_idx];
-    }
-  }
+	sway_log(SWAY_DEBUG, "[resize] con=%p col=%p col_idx=%d col_x=%.0f col_w=%.0f ws_width=%d vp_x=%.0f",
+		con, col, container_sibling_index(col),
+		col->pending.x, col->pending.width, ws->width, ws->viewport_x);
 
-  double new_w = fmax(MIN_SANE_W, col->pending.width + delta_px);
-  col->pending.width = new_w;
-  col->width_fraction = workspace_width_to_fraction(ws, new_w);
-  node_set_dirty(&col->node);
+	double new_w = fmax(MIN_SANE_W, fmin(col->pending.width + delta_px, ws->width));
+	double real_delta = new_w - col->pending.width;
+	sway_log(SWAY_DEBUG, "[resize] delta_px=%.0f new_w=%.0f real_delta=%.0f",
+		delta_px, new_w, real_delta);
 
-  if (sib) {
-    double new_sw = fmax(MIN_SANE_W, sib->pending.width - delta_px);
-    sib->pending.width = new_sw;
-    sib->width_fraction = workspace_width_to_fraction(ws, new_sw);
-  }
+	if (real_delta == 0) {
+		sway_log(SWAY_DEBUG, "[resize] real_delta == 0, early return");
+		return;
+	}
 
-  arrange_workspace(ws);
+	double vp_start = ws->viewport_x;
+	double vp_end = vp_start + ws->width;
+	int col_idx = container_sibling_index(col);
+	if (col_idx < 0) {
+		sway_log(SWAY_DEBUG, "[resize] col_idx < 0, arrange and return");
+		arrange_workspace(ws);
+		return;
+	}
+	int focus_idx = ws->focused_column_idx >= 0 ? ws->focused_column_idx : col_idx;
+	sway_log(SWAY_DEBUG, "[resize] vp=[%.0f, %.0f] col_idx=%d focus_idx=%d n_cols=%d",
+		vp_start, vp_end, col_idx, focus_idx, ws->tiling->length);
+
+	// Pre-change: identify absorb candidates and compute occupied width
+	int candidates[32];
+	int n_candidates = 0;
+	double occupied = col->pending.width;
+	for (int i = 0; i < ws->tiling->length; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		double ce = c->pending.x + c->pending.width;
+		int fully = c->pending.x >= vp_start - 0.5 && ce <= vp_end + 0.5;
+		sway_log(SWAY_DEBUG, "[resize]   col[%d] x=%.0f w=%.0f x_end=%.0f fully=%d",
+			i, c->pending.x, c->pending.width, ce, fully);
+		if (fully && i != col_idx) {
+			candidates[n_candidates++] = i;
+			occupied += c->pending.width;
+		}
+	}
+	occupied += ws->gaps_inner * n_candidates;
+	sway_log(SWAY_DEBUG, "[resize] occupied=%.0f gap=%d n_candidates=%d",
+		occupied, ws->gaps_inner, n_candidates);
+
+	// Apply resize (always)
+	col->pending.width = new_w;
+	col->width_fraction = workspace_width_to_fraction(ws, new_w);
+	node_set_dirty(&col->node);
+
+	double remaining;
+	if (real_delta < 0) {
+		remaining = real_delta;
+		sway_log(SWAY_DEBUG, "[resize] shrinking: remaining=%.0f (farthest grows to fill)", remaining);
+	} else {
+		remaining = fmax(0, occupied + real_delta - ws->width);
+		sway_log(SWAY_DEBUG, "[resize] growing: occupied=%.0f real_delta=%.0f ws->width=%d remaining=%.0f",
+			occupied, real_delta, ws->width, remaining);
+	}
+
+	int used[32] = {0};
+	for (int k = 0; k < n_candidates && remaining != 0; ++k) {
+		int farthest = -1, farthest_dist = -1;
+		for (int ci = 0; ci < n_candidates; ++ci) {
+			if (used[ci]) continue;
+			int dist = abs(candidates[ci] - focus_idx);
+			if (dist > farthest_dist || (dist == farthest_dist && candidates[ci] > farthest)) {
+				farthest_dist = dist;
+				farthest = ci;
+			}
+		}
+		if (farthest < 0) break;
+		used[farthest] = 1;
+		int idx = candidates[farthest];
+		struct sway_container *c = ws->tiling->items[idx];
+		double orig = c->pending.width;
+		double new_cw = fmax(MIN_SANE_W, orig - remaining);
+		double absorbed = orig - new_cw;
+		remaining -= absorbed;
+		sway_log(SWAY_DEBUG, "[resize]   absorb col[%d]: orig=%.0f new=%.0f absorbed=%.0f remaining=%.0f",
+			idx, orig, new_cw, absorbed, remaining);
+		c->pending.width = new_cw;
+		c->width_fraction = workspace_width_to_fraction(ws, new_cw);
+		node_set_dirty(&c->node);
+	}
+
+	sway_log(SWAY_DEBUG, "[resize] arrange_workspace (remaining=%.0f)", remaining);
+	arrange_workspace(ws);
 }
 
 void tiled_resize_vertical_px(struct sway_container *con, uint32_t edge,

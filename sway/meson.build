@@ -50,6 +50,7 @@ sway_sources = files(
 	'commands/border.c',
 	'commands/client.c',
 	'commands/column.c',
+	'commands/column_width.c',
 	'commands/corner_radius.c',
 	'commands/create_output.c',
 	'commands/default_border.c',

@@ -54,6 +54,7 @@ struct sway_workspace {
 	bool urgent;
 
 	double viewport_x, viewport_y;
+	int focused_column_idx;
 
 	struct sway_workspace_state current;
 	struct wlr_ext_workspace_handle_v1 *ext_workspace; // Always set.
@@ -160,6 +161,7 @@ struct sway_container *workspace_split(struct sway_workspace *workspace,
 		enum sway_container_layout layout);
 
 void workspace_update_representation(struct sway_workspace *ws);
+void workspace_update_focused_column_idx(struct sway_workspace *ws);
 
 void workspace_get_box(struct sway_workspace *workspace, struct wlr_box *box);
 

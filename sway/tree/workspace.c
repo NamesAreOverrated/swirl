@@ -225,6 +225,7 @@ struct sway_workspace *workspace_create(struct sway_output *output,
 
 	ws->viewport_x = 0;
 	ws->viewport_y = 0;
+	ws->focused_column_idx = -1;
 	ws->gaps_outer = config->gaps_outer;
 	ws->gaps_inner = config->gaps_inner;
 	if (name) {
@@ -1360,4 +1361,20 @@ cleanup:
 	}
 
 	return old_ws;
+}
+
+void workspace_update_focused_column_idx(struct sway_workspace *ws) {
+	struct sway_seat *seat = input_manager_current_seat();
+	if (!seat) {
+		ws->focused_column_idx = -1;
+		return;
+	}
+	struct sway_container *con = seat_get_focused_container(seat);
+	if (!con || con->pending.workspace != ws) {
+		ws->focused_column_idx = -1;
+		return;
+	}
+	con = container_toplevel_ancestor(con);
+	int idx = list_find(ws->tiling, con);
+	ws->focused_column_idx = idx;
 }
