@@ -1,9 +1,8 @@
-# Shader-based VFX + Animation Architecture
+# VFX + Animation Architecture
 
-This document describes the design for moving border rendering, drop shadows,
-rounded corners, and all spatial animations (move, resize, opacity) into the
-wlroots GLES2 shader pipeline, replacing the existing CPU-side scene-node
-approaches.
+This document describes the actual implementation of border rendering, drop
+shadows, rounded corners, and scene-graph animation in the wlroots GLES2 shader
+pipeline, as of the current codebase.
 
 ## Design Philosophy
 
@@ -11,149 +10,136 @@ approaches.
 
 | Concern | Nature | Owner | Lifetime |
 |---------|--------|-------|----------|
-| Rounded corners, borders, shadows | Static shader uniforms | `wlr_scene_node::vfx` | Until explicitly changed |
-| Position, size, opacity transitions | Temporal tween | `wlr_scene_node::visual` + animation system | Until tween completes |
+| Rounded corners, borders, shadows | Static shader uniforms | `wlr_scene_node_vfx` (via `wlr_scene_node_set_vfx`) | Until explicitly changed |
+| Position, opacity, scale transitions | Temporal tween | `wlr_scene_node_visual` + animation timer | Until tween completes |
 
 VFX are **not** animations. A corner radius doesn't tween — it's a fixed property
 of how the window looks, set once when the config or focus changes.
 
 ### The animation system lives in wlroots, not Sway
 
-Sway currently has its own animation timer (`sway_anim_sync`) and per-node state
-(`struct sway_anim`) in `sway/tree/animation.c`. The new design moves this into
-wlroots for three reasons:
+Sway previously had its own animation timer (`sway_anim_sync`) and per-node
+state (`struct sway_anim`) in `sway/tree/animation.c`. That system was removed.
+The new design lives entirely in wlroots:
 
 1. **The renderer needs the data** — VFX uniforms and visual-size overrides are
-   consumed by the GLES2 shader in `scene_entry_render`. Having the state in
-   wlroots avoids cross-layer callbacks to fetch it.
+   consumed by the render pass in `scene_entry_render`. Having the state in
+   wlroots avoids cross-layer callbacks.
 
 2. **Zero-cost when idle** — `wlr_scene_node::visual` is NULL when no animation
-   is active. The render pass checks `if (visual && visual->width > 0)` before
-   binding the scaled-texcoord shader path — otherwise the fast path runs
-   unchanged.
+   is active. The render pass checks `if (node->visual)` before accumulating
+   offsets, scales, and opacity from ancestor nodes — the fast path runs
+   unchanged when no node in the subtree has a visual override.
 
-3. **No special cases in Sway** — Sway calls `wlr_scene_buffer_set_dest_size_anim()`
-   and the animation "just works". No per-animation bookkeeping in Sway code.
+3. **No special cases in Sway** — Sway calls `wlr_scene_animate_position()` or
+   `wlr_scene_animate()` and the animation "just works". No per-animation
+   bookkeeping in Sway code beyond the initial call.
 
-### Parallel API — never modify existing setters
+### The animation system is timer-driven, not per-frame synced
 
-wlroots' existing `wlr_scene_buffer_set_dest_size()`, `wlr_scene_rect_set_size()`,
-`wlr_scene_node_set_position()`, and `wlr_scene_buffer_set_opacity()` are
-**completely unchanged**. This preserves easy upstream merging.
-
-New `_anim` variants are added alongside:
-- `wlr_scene_buffer_set_dest_size_anim(buf, w, h, spec)`
-- `wlr_scene_node_set_position_anim(node, x, y, spec)`
-- `wlr_scene_node_set_opacity_anim(node, a, spec)`
-
-These set the **logical** (real) value immediately (for input targeting), and
-register a tween on the node's `visual` struct that the shader reads.
-
-### Sway driving vs wlroots driving animations
-
-Sway still drives the frame clock (via `sway_anim_sync`), but it only calls
-`wlr_scene_animator_tick(animator, now_ns)`. The animation system handles
-all easing, completion, and uniform writing internally. If any animation is
-active, `wlr_scene_animator::request_frame` fires, and Sway schedules a
-wlr_output frame.
+The old `sway_anim` system required an explicit `sway_anim_sync()` call from
+`arrange_output` after every transaction arrange pass. The new system is fully
+self-contained:
 
 ```
-Sway                   wlroots
-  │                      │
-  │── tick(now) ──────▶  animator
-  │                      ├── tween each active anim
-  │                      ├── write node->visual
-  │                      ├── if done: fire callback, remove
-  │                      └── emit request_frame if still active
-  │◀── request_frame ────┘
-  │── render frame ────▶  scene_entry_render()
-  │                       ├── read node->visual → shader uniforms
-  │                       ├── read node->vfx → corner/border/shadow
-  │                       └── draw
+on_anim_tick (wl_event_source_timer, 1ms init, 16ms thereafter)
+  └── for each active animation:
+        ├── compute interpolation value
+        ├── if done: snap to final, remove animation, fire callback
+        └── if running: apply interpolated state to node->x/y or node->visual
 ```
+
+No per-frame sync call needed. The timer reschedules itself at 16ms intervals
+while any animation remains active, and disables itself when idle.
+
+### Override API — new functions alongside unchanged setters
+
+wlroots' existing `wlr_scene_node_set_position()`, `wlr_scene_rect_set_size()`,
+`wlr_scene_buffer_set_dest_size()`, etc. are **completely unchanged**.
+
+Animation is started via explicit functions:
+- `wlr_scene_animate()` — animates `node->visual` fields (scale, opacity, offset)
+- `wlr_scene_animate_position()` — animates `node->x/y` directly via
+  `wlr_scene_node_set_position` on each tick
+
+Both functions support **retargeting**: if an animation of the same type
+(position or visual) already exists on the same node, it is reused — the "from"
+state is snapshotted from the current node state, the "to" state is updated,
+and the timer resets. This prevents fighting animations when multiple
+transactions arrive in quick succession.
 
 ---
 
 ## Data Structures
 
-### `wlr_scene_node` additions
+### Visual override (temporal, written by animation system)
 
 ```c
-// ── VFX (static, per-node appearance) ──────────────────────────────────────
-
-struct wlr_scene_node_vfx {
-    float corner_radius[4];         // tl, tr, br, bl (0 = square)
-    struct {
-        float thickness[4];          // top, right, bottom, left (0 = no border)
-        float color[4];             // premultiplied RGBA
-    } border;
-    struct {
-        float blur_sigma;           // 0 = no shadow
-        float opacity;              // 0.0 – 1.0
-        float color[4];             // premultiplied RGBA
-    } shadow;
-};
-
-// ── Animation / visual override (written by animator, read by renderer) ───
-
 struct wlr_scene_node_visual {
-    float x, y;                     // tweened visual position offset
-    float width, height;            // tweened visual size (0 = use real)
-    float opacity;                  // tweened opacity (0.0 – 1.0)
-};
-
-// Extended node struct:
-
-struct wlr_scene_node {
-    enum wlr_scene_node_type type;
-    struct wlr_scene_tree *parent;
-    struct wl_list link;
-    bool enabled;
-    int x, y;
-    struct { struct wl_signal destroy; } events;
-    void *data;
-    struct wlr_addon_set addons;
-    struct { pixman_region32_t visible; } WLR_PRIVATE;
-
-    // NEW:
-    struct wlr_scene_node_vfx *vfx;         // NULL = no VFX
-    struct wlr_scene_node_visual *visual;   // NULL = no active animation
+    float x, y;            // position offset from node->x, node->y
+    float width, height;   // 0 = use real node size (absolute override)
+    float scale_x, scale_y; // 1.0 = normal (relative multiplier)
+    float opacity;         // 1.0 = opaque
 };
 ```
+
+Set via `wlr_scene_node_set_visual(node, &vis)`, cleared via
+`wlr_scene_node_clear_visual(node)`.
+
+### VFX (static, per-node appearance)
+
+```c
+struct wlr_scene_node_vfx {
+    float corner_radius[4];          // tl, tr, br, bl (0 = square)
+    struct {
+        float thickness[4];           // top, right, bottom, left (0 = no border)
+        float color[4];              // premultiplied RGBA
+    } border;
+    struct {
+        float blur_sigma;            // 0 = no shadow
+        float opacity;               // 0.0 – 1.0
+        float color[4];              // premultiplied RGBA
+    } shadow;
+};
+```
+
+Set via `wlr_scene_node_set_vfx(node, &vfx)`.
 
 ### Animation types
 
 ```c
-enum wlr_anim_property {
-    WLR_ANIM_VISUAL_X,
-    WLR_ANIM_VISUAL_Y,
-    WLR_ANIM_VISUAL_WIDTH,
-    WLR_ANIM_VISUAL_HEIGHT,
-    WLR_ANIM_VISUAL_OPACITY,
+enum wlr_easing {
+    WLR_EASING_LINEAR,
+    WLR_EASING_EASE_OUT_CUBIC,
+    WLR_EASING_SPRING,
 };
 
-struct wlr_anim_spec {
-    uint32_t duration_ns;       // 0 = instant (no animation)
-    float (*easing)(float t);   // NULL = ease_out_cubic
-    void (*done)(void *data);   // completion callback (may be NULL)
-    void *done_data;
+struct wlr_scene_anim_spec {
+    enum wlr_easing easing;
+    double duration_ms;         // ease, linear only
+    double damping_ratio;       // spring only (0.1–10.0)
+    double stiffness;           // spring only
+    double epsilon;             // spring settling threshold
 };
 
 struct wlr_scene_animation {
+    struct wl_list link;                     // wlr_scene_animator.animations
     struct wlr_scene_node *node;
-    enum wlr_anim_property prop;
-    double from, to;
-    uint32_t start_time_ns, duration_ns;
-    float (*easing)(float t);
+    bool position;                           // true = animating x/y, false = visual
+    struct wlr_scene_anim_spec spec;
+    union {
+        struct { struct wlr_scene_node_visual from, to; };  // visual case
+        struct { double pos_from_x, pos_from_y, pos_to_x, pos_to_y; }; // position case
+    };
+    struct timespec start_time;
+    struct wl_listener node_destroy;
     void (*done)(void *data);
     void *done_data;
-    struct wl_list link;        // wlr_scene_animator.animations
 };
 
 struct wlr_scene_animator {
-    struct wlr_scene *scene;
-    struct wl_list animations;  // wlr_scene_animation.link
-    bool active;                // cached for fast check
+    struct wl_list animations;
+    struct wl_event_source *timer;
     struct wl_signal request_frame;
 };
 ```
@@ -164,20 +150,28 @@ struct wlr_scene_animator {
 - `vfx` is set once per config/focus change — the compositor writes it, the
   renderer reads it every frame. It never tweens.
 - `visual` is written by the animation system every tick. Separating the two
-  means VFX updates don't route through the animation system at all, and the
-  animation system doesn't need to know about corner radii or shadow config.
+  means VFX updates don't route through the animation system at all.
 
 **Why a pointer (`*vfx`, `*visual`) instead of embedding?**
 - Zero-cost when not in use: every non-animated, non-VFX node has NULL for both.
-  The wlroots scene tree has thousands of nodes (subsurfaces, drag icons, etc.)
-  that will never use VFX or animation.
-- Embedding would add 140+ bytes per node (two structs) regardless of need.
+  The wlroots scene tree has thousands of nodes that will never use VFX or
+  animation.
+- Embedding would add ~140 bytes per node regardless of need.
+
+**Why position and visual in one struct instead of per-property?**
+- Simpler API: one animation entry per node per type (position or visual),
+  rather than one per property (x, y, scale_x, scale_y, opacity, offset).
+- All visual fields are applied atomically in a single `wlr_scene_node_set_visual`
+  call per tick.
 
 ---
 
-## VFX Rendering: `WLR_SCENE_NODE_VFX`
+## VFX Rendering
 
-### New node type
+### VFX node type
+
+`WLR_SCENE_NODE_VFX` is a scene node that draws border decorations (outline,
+drop shadow, corner radius) in a single fragment shader pass.
 
 ```c
 struct wlr_scene_vfx {
@@ -194,504 +188,386 @@ void wlr_scene_vfx_set_size(struct wlr_scene_vfx *vfx, int w, int h);
 
 ```
 container->scene_tree
-├── container->vfx_node      ← NEW WLR_SCENE_NODE_VFX
-│     shader draws:
-│       1. Drop shadow (behind, blurred rounded rect)
-│       2. Border (inset outline, corner-radius clipped)
-│       → rest of the box is transparent (content shows through)
 ├── container->title_bar.tree
-│     └── background rects, text — corner_radius applied
-├── container->content_tree
-│     └── view->scene_tree
-│           └── wlr_scene_buffer — corner_radius clips content
+│     └── background rects, text — managed by sway
+├── container->border.tree
+│     ├── container->border.vfx      ← WLR_SCENE_NODE_VFX
+│     │     shader draws:
+│     │       1. Drop shadow (behind, blurred rounded rect)
+│     │       2. Border (inset outline, corner-radius clipped)
+│     │       → rest of the box is transparent (content shows through)
+│     └── container->content_tree
+│           └── view->scene_tree
+│                 ├── view->saved_surface_tree (frozen buffer during resize)
+│                 ├── view->output_handler (WLR_SCENE_NODE_BUFFER)
+│                 └── view->content_tree
+│                       └── xdg_surface tree (wlr_scene_buffer)
 ```
 
-No more `container->border.{top,bottom,left,right}` — the four individual scene
-rects are replaced by one VFX node. The border is drawn by the fragment shader
-as an inset rounded stroke, eliminating all the edge-positioning math in
-`arrange_container`/`transaction.c`.
+The VFX node replaces the old approach of four individual border rects
+(`border.{top,bottom,left,right}`). The border is drawn by the fragment shader
+as an inset rounded stroke. Shadow is rendered as a Gaussian-blurred rounded
+rect behind the border.
 
 ### Fragment shader (vfx.frag)
 
-```glsl
-// vfx.frag — draws shadow + border for WLR_SCENE_NODE_VFX
+The VFX shader receives uniforms for corner radius, border thickness/color, and
+shadow parameters. It computes:
+1. Shadow — expanded rounded rect with Gaussian blur convolution
+2. Border — outer rounded rect minus inner rounded rect, drawn at given thickness
 
-uniform vec2  u_size;           // VFX node logical size
-uniform vec4  u_corner_radius;  // tl, tr, br, bl
-uniform vec4  u_border_thickness; // t, r, b, l
-uniform vec4  u_border_color;
-uniform float u_shadow_blur;
-uniform float u_shadow_opacity;
-uniform vec4  u_shadow_color;
+The center of the VFX node is transparent (zero alpha), allowing the view
+content (rendered behind it in the scene tree z-order) to show through.
 
-// From common SDF function:
-float corner_alpha(vec2 frag, vec2 pos, vec2 size, vec4 radii);
+### Opaque region
 
-void main() {
-    vec2 frag = gl_FragCoord.xy;
-    vec4 r = u_corner_radius;
-
-    // 1. Shadow — draw Gaussian-blurred rounded rect behind
-    if (u_shadow_blur > 0.0 && u_shadow_opacity > 0.0) {
-        float shadow_alpha = corner_alpha(frag,
-            pos - u_shadow_blur,          // expanded bounds
-            u_size + 2.0 * u_shadow_blur, // expanded bounds
-            r + u_shadow_blur)            // expanded corner
-            * u_shadow_opacity;
-        gl_FragColor = u_shadow_color * shadow_alpha;
-    }
-
-    // 2. Border — outer rounded rect minus inner rounded rect
-    float outer_alpha = corner_alpha(frag, pos, u_size, r);
-    vec2 inner_pos = pos + u_border_thickness.tl; // inset from top-left
-    vec2 inner_size = u_size - u_border_thickness.tl
-                              - u_border_thickness.br; // inset from all sides
-    vec4 inner_r = max(r - u_border_thickness.tl, 0.0);
-    float inner_alpha = 1.0 - corner_alpha(frag, inner_pos, inner_size, inner_r);
-
-    float border_alpha = outer_alpha * inner_alpha;
-    gl_FragColor = u_border_color * border_alpha;
-}
-```
-
-The VFX node sits at the container's bounds. Content sits behind it (in the
-scene tree z-order under the VFX node) and is clipped by a separate
-`wlr_scene_buffer_set_corner_radius()` call on the content buffer node.
-
-### Why a separate node type instead of merging VFX into every node?
-
-Every buffer and rect would carry VFX uniforms (border, shadow, corner) even
-though most don't use them. A dedicated VFX node is drawn once per container
-instead of duplicating the logic across the content buffer node and the 4 old
-border rect nodes. It also keeps the scene tree structure clear: "this node is
-purely decorative."
+A VFX node with active border or shadow reports zero opaque area — the rounded
+corners and inner cutout make the entire node potentially transparent. Nodes
+behind a VFX node should not be culled.
 
 ---
 
-## Animation rendering: `wlr_scene_node_visual`
+## Visual Override Rendering
 
-When `node->visual` is non-NULL and `visual->width > 0`, the render pass
-overrides the node's destination size with the tweened visual size:
-
-```c
-// In scene_entry_render() — after scene_node_get_size():
-
-if (node->visual && node->visual->width > 0) {
-    dst_box.width = node->visual->width;
-    dst_box.height = node->visual->height;
-}
-if (node->visual && (node->visual->x != 0 || node->visual->y != 0)) {
-    dst_box.x += node->visual->x;
-    dst_box.y += node->visual->y;
-}
-```
-
-### For textures (resize animation)
-
-The fragment shader receives `u_visual_size` and scales texture coordinates:
-
-```glsl
-// tex_rgba.frag (modified)
-uniform vec2 u_visual_size;      // tweened, 0 = use real
-
-void main() {
-    vec2 size = u_visual_size.x > 0.0 ? u_visual_size : u_real_size;
-    vec2 uv = (gl_FragCoord.xy - u_pos) / size;
-    gl_FragColor = texture2D(tex, uv) * alpha;
-}
-```
-
-This means during a resize animation, the old buffer content is smoothly scaled
-to the intermediate visual size. No waiting for a new client buffer — the shader
-scales whatever the client last sent. When the animation completes and a new
-correctly-sized buffer arrives, `u_visual_size` matches the real size and the
-effect is invisible.
-
-### For opacity
+When any ancestor node has a non-NULL `visual` pointer, `scene_entry_render()`
+walks up the parent chain and accumulates:
 
 ```c
-// In scene_entry_render():
-float opacity = scene_buffer->opacity;
-if (node->visual) {
-    opacity *= node->visual->opacity;
+struct wlr_scene_node *p = node;
+while (p) {
+    if (p->visual) {
+        if (p->visual->width > 0) {
+            dst_box.width = p->visual->width;     // absolute override
+        }
+        if (p->visual->height > 0) {
+            dst_box.height = p->visual->height;    // absolute override
+        }
+        if (p->visual->scale_x > 0) {
+            vis_scale_x *= p->visual->scale_x;     // accumulated scale
+        }
+        if (p->visual->scale_y > 0) {
+            vis_scale_y *= p->visual->scale_y;
+        }
+        vis_off_x += p->visual->x;                 // accumulated offset
+        vis_off_y += p->visual->y;
+        dst_box.x += (int)p->visual->x;
+        dst_box.y += (int)p->visual->y;
+        vis_alpha *= p->visual->opacity;            // accumulated opacity
+    }
+    p = p->parent ? &p->parent->node : NULL;
 }
 ```
 
-Opacity is simply multiplied — the existing `.alpha` field in the render
-pass already handles this.
+After accumulation, if the total scale differs from 1.0, auto-centering is
+applied:
 
-### For position (move animation)
+```c
+if (vis_scale_x != 1.0f || vis_scale_y != 1.0f) {
+    int sw = (int)(dst_box.width * vis_scale_x);
+    int sh = (int)(dst_box.height * vis_scale_y);
+    dst_box.x += (dst_box.width - sw) / 2;  // center-shrink
+    dst_box.y += (dst_box.height - sh) / 2;
+    dst_box.width = sw > 0 ? sw : 1;
+    dst_box.height = sh > 0 ? sh : 1;
+}
+```
 
-The VFX node's border/shadow follow the container's visual position
-automatically because the VFX node is a child of the container's scene tree.
-When `wlr_scene_node_set_position_anim()` tweens the container's visual x/y,
-the VFX node (positioned at 0,0 relative to parent) moves with it.
+Opacity is multiplied into each entry type's color alpha:
+- Rects: `scene_rect->color[3] * vis_alpha`
+- Single-pixel buffers: `color_alpha * buffer_opacity * vis_alpha`
+- Texture buffers: `buffer_opacity * vis_alpha`
+- VFX border: `border.color[3] * vis_alpha`
+- VFX shadow: `shadow.opacity * vis_alpha`
+
+The VFX node's position and size are also adjusted by visual state:
+- `x_rel += vis_off_x` (offset from accumulated visual.x/y)
+- `vw *= vis_scale_x` (scale VFX width by accumulated scale)
+- `vh *= vis_scale_y`
+- `x_rel += (original_vw - vw) / 2` (center-shrink like dst_box)
+- Shadow opacity: `shadow.opacity * vis_alpha`
+
+---
+
+## Animation System
+
+### Timer tick
+
+`on_anim_tick` runs from `wl_event_source_timer`:
+
+```
+on_anim_tick:
+  for each animation:
+    if prop_done(&anim->start_time, &anim->spec):
+      if anim->position:
+        snap node->x,y to pos_to_x,pos_to_y
+      else:
+        snap node->visual to anim->to
+      fire anim->done callback if set
+      remove + free animation
+    else:
+      compute interpolation value v
+      if anim->position:
+        node->x = lerp(pos_from_x, pos_to_x, v)
+        node->y = lerp(pos_from_y, pos_to_y, v)
+      else:
+        per-field lerp of from→to for visual
+        wlr_scene_node_set_visual(node, &interpolated)
+  if any animation running:
+    reschedule timer at 16ms
+  else:
+    disable timer
+```
+
+### Retargeting
+
+Both `wlr_scene_animate()` and `wlr_scene_animate_position()` iterate the
+animation list looking for a matching entry (`node == node && position flag
+matches`). If found:
+1. The "from" state is snapshotted from the current node state (current
+   `node->x/y` for position, current `node->visual` for visual)
+2. The "to" state is updated to the new target
+3. The spec (easing, duration) is overwritten
+4. The start time is reset to now
+5. The timer is restarted at 1ms
+
+If not found, a new animation entry is allocated and inserted.
+
+### Opacity-only animation
+
+Since `wlr_scene_animate()` animates all visual fields (scale, offset, opacity)
+simultaneously, an opacity-only fade is achieved by setting `from` and `to`
+with default values for fields that should not change:
+
+```c
+struct wlr_scene_node_visual from = { .opacity = 1.0f, .scale_x = 1.0f, .scale_y = 1.0f };
+wlr_scene_node_set_visual(node, &from);
+
+struct wlr_scene_node_visual to = { .opacity = 0.0f, .scale_x = 1.0f, .scale_y = 1.0f };
+wlr_scene_animate(animator, node, &to, &spec, done_cb, done_data);
+```
+
+The `retarget` path snapshots the current `node->visual` as "from", so
+subsequent calls naturally continue from wherever the current animation is.
+
+### Node destruction
+
+When a node with an active animation is destroyed, the `node_destroy` listener
+fires, removes the animation from the list, and frees it. The done callback is
+**not** invoked on node destruction — callers that need cleanup should listen
+for the node's destroy event separately.
+
+---
+
+## Sway Integration
+
+### What is currently animated
+
+| Animation | Trigger | Mechanism | Duration | Easing |
+|-----------|---------|-----------|----------|--------|
+| **Open** (view_map) | View mapped | `wlr_scene_animate` on `container->scene_tree->node`: scale 0.88→1, opacity 0→1 | 150ms | ease_out_cubic |
+| **Position** (transaction) | Container x,y changes ≥10px | `wlr_scene_animate_position` on `container->scene_tree->node` | Spring (k=1200, ζ=1.0, ε=0.001) | spring |
+| **Tiling layer scroll** (arrange_output) | workspace viewport changes ≥10px | `wlr_scene_animate_position` on `child->layers.tiling->node` | Spring (same) | spring |
+| **Column scroll** (column_scroll_vert_to) | User scrolls column | `wlr_scene_animate_position` on `col->content_tree->node` | Spring (same) | spring |
+
+### What is NOT animated
+
+| Operation | Behavior |
+|-----------|----------|
+| **Resize** (container width/height change) | Snaps immediately — no scale or visual animation |
+| **Close** (container destruction) | Snaps immediately — no fade-out |
+| **Opacity** | Not animated — `sway_anim_alpha` was a stub, no replacement |
+| **Saved buffer** | Removed immediately after transaction — no crossfade |
+
+### Position thresholds
+
+Position animations only fire when the Manhattan distance `|dx| + |dy| ≥ 10px`.
+Below this threshold, the node position snaps immediately without animation.
+This prevents micro-wobbles from rounding or small layout adjustments.
+
+### Size changes
+
+Resize animation was attempted via two approaches and then removed:
+
+1. **Visual scale** (`wlr_scene_animate` on scene_tree with scale_x/scale_y):
+   The renderer's auto-centering shifts each child node differently based on
+   its intrinsic size (background rects = new_size, saved buffer = old_size),
+   causing visible misalignment between the animated parts.
+
+2. **Crossfade** (`wlr_scene_animate` on saved_surface_tree with opacity 1→0):
+   Required deferred cleanup of the saved buffer via a done callback, which
+   introduced use-after-free crashes when the view was destroyed mid-animation.
+
+Both were reverted. The saved buffer is now removed immediately after
+transaction commit (original behavior).
+
+### Open animation
+
+When a view is mapped (`view_map` in `sway/tree/view.c`), a visual override
+is applied to `container->scene_tree->node`:
+
+```c
+struct wlr_scene_node_visual init = {
+    .scale_x = 0.88f, .scale_y = 0.88f,
+    .opacity = 0.0f,
+};
+wlr_scene_node_set_visual(node, &init);
+
+struct wlr_scene_node_visual to = {
+    .scale_x = 1.0f, .scale_y = 1.0f,
+    .opacity = 1.0f,
+};
+wlr_scene_animate(animator, node, &to, spec_150ms_ease_out_cubic, NULL, NULL);
+```
+
+The renderer's auto-centering handles the centering offset during the scale
+animation. All descendant nodes (rects, buffers, VFX) inherit the accumulated
+scale and opacity, creating a smooth zoom-in + fade-in effect.
+
+Both the open animation and position animations can be active simultaneously
+on different nodes without conflict (one is a visual animation on the
+container's scene_tree, the other is a position animation on the same or
+different node). Retargeting is type-aware: visual animations only retarget
+other visual animations, and position animations only retarget other position
+animations.
 
 ---
 
 ## Pixman fallback
 
-The pixman renderer (software fallback when no GPU is available) doesn't
-support custom fragment shaders. For each VFX/animation feature:
+The pixman renderer (software fallback) doesn't support custom fragment
+shaders. VFX features (rounded corners, borders, shadows) use pixman region
+operations:
 
 | Feature | Pixman approach |
 |---------|----------------|
 | Corner radius | Render normally, then composite corner cutouts using `pixman_image_create_solid_fill()` + `pixman_image_composite32()` with a rounded mask |
 | Borders | Render the outer rect, then punch out the inner rect using pixman region subtract |
 | Shadow | Expand the rect by `blur_sigma`, render the shadow color with a pixman gaussian-blur convolution |
-| Visual size scaling | Use `pixman_image_set_transform()` with a bilinear scale (already exists in pixman pass) |
+| Visual scale | Uses `pixman_image_set_transform()` with bilinear scale (exists in pixman pass) |
 | Visual opacity | Already handled by the `mask` parameter in `pixman_image_composite32()` |
 
 The pixman backend falls behind GLES2 quality-wise (no smoothstep for
-anti-aliased corners), but this is the same limitation as the current pixman
-path — it's a software fallback.
+anti-aliased corners), but this is the same limitation as any software
+fallback.
 
 ---
 
 ## Opaque region and damage tracking
 
 Rounded corners make parts of a node transparent that would otherwise be
-opaque. This matters for occlusion culling: wlroots uses the opaque region to
-skip rendering nodes hidden behind opaque ones.
-
-For each node with `corner_radius > 0`:
-
-```c
-// In scene_node_opaque_region():
-if (node->vfx && node->vfx->corner_radius) {
-    pixman_region32_t corner_squares = create_corner_square_region(
-        node->vfx->corner_radius, x, y, width, height);
-    pixman_region32_subtract(opaque, opaque, &corner_squares);
-    pixman_region32_fini(&corner_squares);
-}
-```
-
-This subtracts the four corner squares (where the rounded rect fades to
-transparent) from the opaque region. The center of the window remains opaque,
-so nodes behind the center are still culled correctly.
+opaque. For VFX nodes, the entire node reports zero opaque area because both
+the inner cutout and rounded corners create transparency. This prevents
+incorrect occlusion culling behind the VFX node.
 
 Damage tracking itself (`scene_node_update()`) is unchanged — the entire node
-bounding box is damaged when VFX or visual state changes, the same as any
-other property change.
+bounding box is damaged when VFX or visual state changes.
 
 ---
 
-## Sway integration
+## Legacy code removed
 
-### Config
+The old `sway/tree/animation.c` + `animation.h` (251 + 55 lines) was fully
+deleted. It provided:
 
-```c
-// sway/config.h additions
-struct sway_config {
-    int corner_radius;              // 0 = square
-    bool shadow_enabled;
-    int shadow_blur_radius;
-    float shadow_opacity;
-    struct wlr_render_color shadow_color;
-    // ... current fields ...
-};
-```
+- `sway_anim_move()` — predecessor to `wlr_scene_animate_position()`
+- `sway_anim_alpha()` — no-op stub for opacity animation
+- `sway_anim_sync()` — per-frame sync call from `arrange_output`
+- `sway_anim_init()` — initialization, replaced by `wlr_scene_animator_create()`
 
-### Command parsing
+Call sites migrated:
+- `transaction.c` `apply_container_state` → `wlr_scene_animate_position()`
+- `transaction.c` `arrange_output` → `wlr_scene_animate_position()` on tiling layer
+- `viewport.c` `column_scroll_vert_to` → `wlr_scene_animate_position()`
+- `server.c` `sway_anim_init` → `wlr_scene_animator_create()`
+- `resize.c` — include removed, no direct animation call
 
-New commands: `corner_radius`, `shadows`, `shadow_blur_radius`, `shadow_color`,
-`shadow_opacity`.
-
-```c
-// sway/commands/corner_radius.c
-struct cmd_results *cmd_corner_radius(int argc, char **argv) {
-    config->corner_radius = atoi(argv[0]);
-    // Apply to all existing containers:
-    container_for_each(container_apply_vfx, NULL);
-    arrange_root();
-    return cmd_results_new(CMD_SUCCESS, NULL);
-}
-```
-
-### Container creation
-
-```c
-// sway/tree/container.c — replaces 4 border rects with one VFX node
-struct sway_container *container_create(enum sway_container_layout layout) {
-    // ...
-    // Before:
-    c->border.top = alloc_rect_node(c->border.tree, &failed);
-    c->border.bottom = alloc_rect_node(c->border.tree, &failed);
-    c->border.left = alloc_rect_node(c->border.tree, &failed);
-    c->border.right = alloc_rect_node(c->border.tree, &failed);
-
-    // After:
-    c->vfx_node = wlr_scene_vfx_create(c->scene_tree, 0, 0);
-    // (vfx_node stores corner/border/shadow state in node->vfx)
-}
-```
-
-### Transaction apply
-
-```c
-// sway/desktop/transaction.c — arrange_container():
-
-// BEFORE: 20 lines of individual border rect sizing + view offset
-wlr_scene_rect_set_size(con->border.top, width, border_top);
-wlr_scene_rect_set_size(con->border.bottom, width, border_bottom);
-wlr_scene_rect_set_size(con->border.left, border_left, vert_border_height);
-wlr_scene_rect_set_size(con->border.right, border_right, vert_border_height);
-wlr_scene_node_set_position(&con->border.top->node, 0, 0);
-wlr_scene_node_set_position(&con->border.bottom->node, 0, ...);
-wlr_scene_node_set_position(&con->border.left->node, 0, border_top);
-wlr_scene_node_set_position(&con->border.right->node, ...);
-wlr_scene_node_set_position(&con->view->scene_tree->node, border_left, border_top);
-wlr_scene_node_set_position(&con->view->output_handler->node, -border_left, -border_top);
-
-// AFTER: one VFX node + corner_radius on content
-if (con->vfx_node) {
-    wlr_scene_vfx_set_size(con->vfx_node, width, height);
-    wlr_scene_vfx_set_border_color(con->vfx_node, state->border_color);
-    con->vfx_node->node.vfx->corner_radius = config->corner_radius;
-    con->vfx_node->node.vfx->shadow = { config->shadow_blur, ... };
-}
-// Content at (0,0) — borders are purely visual
-wlr_scene_node_set_position(&con->view->scene_tree->node, 0, 0);
-// Corner radius on content buffer
-if (con->view && con->view->content_buffer) {
-    wlr_scene_buffer_set_corner_radius(con->view->content_buffer,
-        config->corner_radius);
-}
-```
-
-### Focus change
-
-```c
-// sway/tree/container.c — container_set_border_colors() (called on focus):
-wlr_scene_vfx_set_border_color(con->vfx_node, focused ? colors->focused : colors->unfocused);
-```
-
-### Animation
-
-```c
-// sway/tree/animation.c — sway_anim_move() is now a thin wrapper:
-void sway_anim_move(struct wlr_scene_node *node,
-        double from_x, double from_y, double to_x, double to_y,
-        struct sway_prop_config cfg) {
-    (void)from_x; (void)from_y; // from is handled internally
-    struct wlr_anim_spec spec = {
-        .duration_ns = cfg.type == SWAY_ANIM_SPRING
-            ? spring_settle_time(cfg.damping_ratio, cfg.stiffness, cfg.epsilon)
-            : cfg.duration_ms * 1000000,
-        .easing = cfg.type == SWAY_ANIM_EASE ? ease_out_cubic : NULL,
-        .done = NULL,
-    };
-    wlr_scene_node_set_position_anim(node, to_x, to_y, &spec);
-}
-
-void sway_anim_sync(void) {
-    uint64_t now_ns = /* clock_gettime monotonic */;
-    struct wlr_scene_animator *anim = scene_node_get_root(some_node)->animator;
-    wlr_scene_animator_tick(anim, now_ns);
-}
-```
-
-### Column resize animation
-
-```c
-// sway/tree/column.h:
-static inline void column_set_width_px(struct sway_container *col, double width_px) {
-    struct sway_container *siblings = container_get_siblings(col);
-    // ... existing logic ...
-    wlr_scene_buffer_set_dest_size_anim(col->content_tree,
-        width_px, col->pending.height,
-        &(struct wlr_anim_spec){ .duration_ns = 200000000, .easing = ease_out_cubic });
-}
-```
-
----
-
-## Migration from current Sway animation system
-
-| Current (`sway/tree/animation.c`) | New |
-|-----------------------------------|-----|
-| `struct sway_anim` per node | `struct wlr_scene_animation` per property |
-| `wl_list animations` in Sway | `wlr_scene_animator::animations` in wlroots |
-| `sway_anim_move(node, from, to, cfg)` | `wlr_scene_node_set_position_anim(node, to_x, to_y, &spec)` |
-| `sway_anim_alpha(node, from, to, cfg)` (stub — no-op) | `wlr_scene_node_set_opacity_anim(node, to, &spec)` — works via visual->opacity |
-| `sway_anim_scale` (removed previously) | `wlr_scene_buffer_set_dest_size_anim(buf, w, h, &spec)` |
-| `sway_anim_sync()` calls `wlr_scene_node_set_position()` | `sway_anim_sync()` calls `wlr_scene_animator_tick(anim, now)` |
-| Timer-driven via `wl_event_source_add_timer` | Same — but calls `wlr_scene_animator_tick()` instead of tweening directly |
-| Node-destroy listener cleaning up `struct sway_anim` | wlr_scene_node_destroy() cancels all animations on the node |
-
----
-
-## Upstream merge compatibility
-
-All wlroots changes are **additive**:
-- New fields at the end of existing structs (or as pointer members)
-- New functions alongside existing ones (`_anim` variants, `*_vfx_*`)
-- New node type added to the enum (doesn't break existing switch statements
-  that don't handle it — they'll hit the `default:` or `assert(false)` path)
-
-The only modifications to existing files are:
-- `wlr_scene.h` — struct field additions + new function declarations
-- `wlr_scene.c` — `scene_entry_render` gets new branches (VFX dispatch,
-  visual override check) and opaque region adjustments
-- `pass.h` — `corner_radius` field in options structs
-- `gles2/pass.c` — uniform binding for new shader paths
-- `gles2/shaders/quad.frag` / `tex_rgba.frag` / `tex_rgbx.frag` — uniform
-  declarations + VFX/visual coordinate branching
-
-None of these delete or refactor existing code paths. The non-VFX, non-animated
-fast path is identical to upstream: `if (!node->vfx && !node->visual) { /* same */
-}`.
-
----
-
-## Implementation order
-
-1. Add VFX fields + `WLR_SCENE_NODE_VFX` type to wlroots (initially invisible)
-2. Add `corner_radius` to render pass options + GLES2 shaders
-3. Add `wlr_scene_rect_set_corner_radius()` + `wlr_scene_buffer_set_corner_radius()`
-3. Replace border rects in Sway with `wlr_scene_vfx` node
-4. Add shadow rendering to VFX shader
-5. Add `wlr_scene_node_visual` + animation infrastructure
-6. Add `_anim` API setters
-7. Migrate Sway `sway_anim_move` → `wlr_scene_node_set_position_anim`
-8. Add column resize animation via `wlr_scene_buffer_set_dest_size_anim`
-9. Add pixman fallback rendering for VFX + visual overrides
-10. Remove dead code: `container->border.{top,bottom,left,right}` in Sway,
-    old `sway_anim_scale` remnants, `sway_anim_alpha` stub
+The new animation code lives in:
+- `subprojects/wlroots/types/scene/animation.c` — engine + API
+- `subprojects/wlroots/include/wlr/types/wlr_scene_animation.h` — header
 
 ---
 
 ## Quirks & Findings
 
-### 1. `scene_node_opaque_region` has no VFX case
+### 1. Auto-centering causes misalignment under parent scale
 
-`scene_opaque_region()` (called per-node during the visibility/update pass)
-lacked a `WLR_SCENE_NODE_VFX` branch and fell through to the default, which
-set the **entire VFX node bounds as fully opaque**. Since the VFX node is a
-sibling drawn above the content, its "opaque" area was subtracted from the
-shared visibility accumulator *before* the content buffer was processed,
-causing the content's `node->visible` to be empty (culled).
+When `visual.scale` is set on a tree node, the renderer applies auto-centering
+to each descendant entry independently: `dst_box.x += (width - width*scale) / 2`.
+Entries with different intrinsic sizes (e.g., background rect at new_size vs.
+saved buffer at old_size) get different auto-centering shifts, causing visible
+misalignment between siblings. This is why size animation via parent `visual.scale`
+was removed.
 
-**Fix:** Add `} else if (node->type == WLR_SCENE_NODE_VFX) { return; }` to
-report zero opaque area.
+### 2. `scene_node_opaque_region` has no VFX case
 
-### 2. Blend mode forced to NONE when uniform `color->a == 1.0`
+`scene_node_opaque_region()` needed a `WLR_SCENE_NODE_VFX` branch to report
+zero opaque area. Without it, the VFX node's entire bounds were marked as fully
+opaque, causing content behind it to be culled during visibility accumulation.
 
-`render_pass_add_rect()` in `render/gles2/pass.c` overrides the blend mode:
-```c
-color->a == 1.0 ? WLR_RENDER_BLEND_MODE_NONE : options->blend_mode;
-```
-For a VFX border frame, the border color's alpha is typically 1.0 (fully opaque
-border paint). This forces `WLR_RENDER_BLEND_MODE_NONE`, but the shader
-computes per-pixel alpha — the center is `color * 0 = (0,0,0,0)`. With NONE
-blend mode, `gl_FragColor = (0,0,0,0)` is written directly, overwriting the
-framebuffer with black instead of letting content show through.
+**Fix:** `} else if (node->type == WLR_SCENE_NODE_VFX) { return; }`
 
-**Fix:** Check `border_thickness` before the blend-mode decision — when any
-border thickness is non-zero, force `WLR_RENDER_BLEND_MODE_PREMULTIPLIED`.
+### 3. Blend mode forced to NONE when uniform `color->a == 1.0`
 
-### 3. Shader border offset direction (sign error)
+`render_pass_add_rect()` overrides blend mode: `color->a == 1.0` → NONE.
+For a VFX border with opaque paint (alpha=1.0), the shader computes per-pixel
+alpha (center is transparent). With NONE blend, `gl_FragColor = (0,0,0,0)`
+overwrites the framebuffer with black instead of letting content show through.
 
-The original shader computed the inner (content) rect offset as:
-```glsl
-vec2 inner_pos = pos + vec2(bt[3], bt[0]); // BUG: should be subtraction
-```
-`pos` is the fragment position relative to the VFX node's top-left. The inner
-rect starts at `(bt_left, bt_top)` in VFX coordinates. But `corner_alpha()`
-interprets its first argument as coordinates *within* the inner rect's own
-space (where `(0,0)` is the inner rect's origin). Adding the offset pushed
-the inner rect's *perceived* origin `2×` inward, so the top and left border
-areas were treated as inside the inner rect and made transparent.
-
-**Fix:** `inner_pos = pos - vec2(bt[3], bt[0])` — subtracting shifts the
-coordinate space so VFX `(bt_left, bt_top)` maps to `(0, 0)` in inner-rect
-space.
+**Fix:** When any border thickness is non-zero, force
+`WLR_RENDER_BLEND_MODE_PREMULTIPLIED`.
 
 ### 4. `fwidth()` requires GL_OES_standard_derivatives on GLES2
 
-GLES2 does not support `fwidth()` without an explicit extension enable:
+GLES2 does not support `fwidth()` without explicit extension enable:
 ```glsl
 #extension GL_OES_standard_derivatives : enable
 ```
-Without it, the shader silently fails to compile on some drivers (notably
-Mesa software rasterizer) and produces aliased/non-existent corner
-smoothing on others.
 
 ### 5. wlroots as a standalone git repo inside sway
 
-`subprojects/wlroots/` has its own `.git/` directory — **it is not a git
-submodule**. Both repos need separate commits:
+`subprojects/wlroots/` has its own `.git/` directory — it is not a git
+submodule. Both repos need separate commits:
 ```bash
 cd subprojects/wlroots && git commit -m "..."
 cd ../.. && git commit -m "..."
 ```
-The meson build system picks up whatever is on disk. Rebuilding after
-wlroots changes requires recompiling wlroots, but ninja handles this
-automatically.
 
-### 7. HiDPI border/inner rect coordinate-space mismatch
+### 6. HiDPI border/inner rect coordinate-space mismatch
 
-The VFX shader's `pos` and `size` are in **buffer coordinates** (after scaling
-by output scale via `transform_output_box`), but `u_border_thickness`,
-`u_corner_radius`, and `u_inner_corner_radius` are in **logical pixels** (never
-scaled). On HiDPI displays (scale > 1), the inner rect's position and size in the
-shader are smaller than the content area, leaving a visible gap that scales with
-border width × (scale − 1).
+The VFX shader's `pos` and `size` are in buffer coordinates (after scaling by
+output scale), but `border_thickness` and `corner_radius` are in logical pixels.
+On HiDPI (scale > 1), the inner rect appears smaller than the content area.
 
-**Initial fix:** Multiply thickness and radius values by `data->scale` in
-`scene_entry_render()` before passing them to `wlr_render_rect_options`.
-
-**Precision fix (sub-pixel gaps remain):** The content node's buffer position is
-computed by `transform_output_box()` using `round(logical_pos × scale)`, but the
-VFX inner rect offset was `border_thickness × scale` (raw, unrounded). At
-non-integer scene positions or when `border_thickness × scale` has a fractional
-part that rounds differently from the content position, a ±1 pixel gap appears.
-
-**Final fix:** Compute each buffer-precise border offset using `roundf()` to
-match the content's rounding exactly:
+**Fix:** Multiply thickness and radius values by `scale` in `scene_entry_render`,
+and use `roundf()` on each border edge offset to match the content's rounding
+exactly, eliminating sub-pixel gaps:
 
 ```c
-bt_left = roundf((x_rel + left_logical) × s) - roundf(x_rel × s);
-bt_top  = roundf((y_rel + top_logical) × s) - roundf(y_rel × s);
-// right side: offset from VFX right edge
-bt_right = roundf((x_rel + vw) × s) - roundf((x_rel + vw - right_logical) × s);
-// bottom side: offset from VFX bottom edge
-bt_bottom = roundf((y_rel + vh) × s) - roundf((y_rel + vh - bottom_logical) × s);
+bt_left = roundf((x_rel + left_logical) * s) - roundf(x_rel * s);
+bt_top  = roundf((y_rel + top_logical) * s) - roundf(y_rel * s);
+bt_right = roundf((x_rel + vw) * s) - roundf((x_rel + vw - right_logical) * s);
+bt_bottom = roundf((y_rel + vh) * s) - roundf((y_rel + vh - bottom_logical) * s);
 ```
 
-This ensures `inner_pos = (gl_FragCoord.xy − u_box.xy) − bt` lands exactly at
-the content's buffer origin, eliminating all sub-pixel gaps.
-
-### 8. `WL_OUTPUT_TRANSFORM_FLIPPED_180` projection matrix
+### 7. `WL_OUTPUT_TRANSFORM_FLIPPED_180` projection matrix
 
 The GLES2 render pass creates its projection matrix with
-`WL_OUTPUT_TRANSFORM_FLIPPED_180`, not `WL_OUTPUT_TRANSFORM_NORMAL`:
-```c
-matrix_projection(pass->projection_matrix, wlr_buffer->width, wlr_buffer->height,
-    WL_OUTPUT_TRANSFORM_FLIPPED_180);
-```
-This does **not** actually flip the Y axis (`mat[4] = 2/height`, positive),
-so the box coordinates in output space and `gl_FragCoord.xy` are in the same
-orientation — both have Y = 0 at the top and Y increasing downward. The
-shader's `pos = gl_FragCoord.xy - u_box.xy` works correctly without any
-Y-coordinate adjustment.
+`WL_OUTPUT_TRANSFORM_FLIPPED_180`. This does not actually flip the Y axis —
+`gl_FragCoord.xy` and the box coordinates are in the same orientation (Y = 0 at
+top, increasing downward). No Y-coordinate adjustment is needed in shaders.
 
-### 9. `scene_node_invisible` must be extended for every new VFX effect
+### 8. `scene_node_invisible` must be extended for every new VFX effect
 
-`scene_node_invisible()` is the early-out check used during render-list
-construction — if a node is "invisible", no entry is added and per-frame work is
-skipped. For VFX nodes it checks whether border _or_ shadow is active:
+`scene_node_invisible()` checks whether a VFX node has active border _or_
+shadow. Adding a new effect (e.g., glow, inner shadow) requires extending this
+check so the node is not skipped during render-list construction when the
+effect is active.
 
-```c
-} else if (node->type == WLR_SCENE_NODE_VFX) {
-    if (node->vfx == NULL) return true;
-    bool has_border = node->vfx->border.thickness[0] > 0 || ...;
-    bool has_shadow = node->vfx->shadow.blur_sigma > 0.0f &&
-        node->vfx->shadow.opacity > 0.0f &&
-        node->vfx->shadow.color[3] > 0.0f;
-    return !has_border && !has_shadow;
-}
-```
+### 9. `wlr_scene_animation_cancel` calls `wlr_scene_node_set_visual` for all animations
 
-Adding any new effect (e.g. glow, inner shadow, outline) requires extending this
-check so the node is not skipped when the effect is active.
+`wlr_scene_animation_cancel()` unconditionally calls
+`wlr_scene_node_set_visual(anim->node, &anim->to)`, even for position
+animations where `anim->to` is a visual struct that was never initialized
+(zeroed from calloc). For position animations, this would reset the visual
+state to all zeros (scale=0, opacity=0). This function is not currently used
+by any caller.

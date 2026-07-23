@@ -57,6 +57,7 @@
 #include "list.h"
 #include "log.h"
 #include "sway/config.h"
+#include <wlr/types/wlr_scene_animation.h>
 #include "sway/desktop/idle_inhibit_v1.h"
 #include "sway/input/input-manager.h"
 #include "sway/output.h"
@@ -64,8 +65,6 @@
 #include "sway/input/cursor.h"
 #include "sway/tree/root.h"
 #include "sway/tree/workspace.h"
-#include "sway/tree/animation.h"
-
 #if WLR_HAS_XWAYLAND
 #include <wlr/xwayland/shell.h>
 #include "sway/xwayland.h"
@@ -252,7 +251,7 @@ bool server_init(struct sway_server *server) {
 		return false;
 	}
 	server->wl_event_loop = wl_display_get_event_loop(server->wl_display);
-	sway_anim_init(server->wl_event_loop);
+	server->animator = wlr_scene_animator_create(server->wl_event_loop);
 
 	wl_display_set_global_filter(server->wl_display, filter_global, NULL);
 	wl_display_set_default_max_buffer_size(server->wl_display, 1024 * 1024);

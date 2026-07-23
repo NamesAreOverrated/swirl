@@ -1,7 +1,6 @@
 #include "log.h"
 #include "sway/commands.h"
 #include "sway/desktop/transaction.h"
-#include "sway/tree/animation.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/layout.h"
 #include "sway/tree/view.h"

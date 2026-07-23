@@ -8,7 +8,6 @@
 #include "sway/output.h"
 #include "sway/scene_descriptor.h"
 #include "sway/server.h"
-#include "sway/tree/animation.h"
 #include "sway/tree/container.h"
 #include "sway/tree/node.h"
 #include "sway/tree/view.h"
@@ -19,6 +18,7 @@
 #include <string.h>
 #include <time.h>
 #include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_scene_animation.h>
 
 struct sway_transaction {
   struct wl_event_source *timer;
@@ -246,19 +246,29 @@ static void apply_container_state(struct sway_container *container,
 
   memcpy(&container->current, state, sizeof(struct sway_container_state));
 
-  if (container->scene_tree &&
+  if (container->scene_tree && !container->node.destroying &&
       (old.x != container->current.x || old.y != container->current.y)) {
-    double fx = container->scene_tree->node.x;
-    double fy = container->scene_tree->node.y;
-    struct sway_prop_config cfg = {
-        .type = SWAY_ANIM_SPRING,
-        .damping_ratio = 1.0,
-        .stiffness = 1200.0,
-        .epsilon = 0.001,
-    };
-    sway_anim_move(&container->scene_tree->node, fx, fy, container->current.x,
-                   container->current.y, cfg);
-  } else if (container->scene_tree) {
+    double dist = fabs(container->current.x - old.x) +
+      fabs(container->current.y - old.y);
+    if (dist >= 10.0) {
+      double from_x = container->scene_tree->node.x;
+      double from_y = container->scene_tree->node.y;
+      wlr_scene_node_set_position(&container->scene_tree->node,
+          (int)container->current.x, (int)container->current.y);
+
+      struct wlr_scene_anim_spec spec = {
+          .easing = WLR_EASING_SPRING,
+          .damping_ratio = 1.0,
+          .stiffness = 1200.0,
+          .epsilon = 0.001,
+      };
+      wlr_scene_animate_position(server.animator, &container->scene_tree->node,
+          from_x, from_y, container->current.x, container->current.y,
+          &spec, NULL, NULL);
+    } else {
+      wlr_scene_node_set_position(&container->scene_tree->node,
+          (int)container->current.x, (int)container->current.y);
+    }
   }
 
   if (view) {
@@ -676,14 +686,18 @@ static void arrange_output(struct sway_output *output, int width, int height) {
         double new_ty = gaps->top + area->y - child->current.viewport_y;
 
         if (old_tx != new_tx || old_ty != new_ty) {
-          struct sway_prop_config cfg = {
-              .type = SWAY_ANIM_SPRING,
-              .damping_ratio = 1.0,
-              .stiffness = 1200.0,
-              .epsilon = 0.001,
-          };
-          sway_anim_move(&child->layers.tiling->node, old_tx, old_ty, new_tx,
-                         new_ty, cfg);
+          double dist = fabs(new_tx - old_tx) + fabs(new_ty - old_ty);
+          if (dist >= 10.0) {
+            struct wlr_scene_anim_spec cfg = {
+                .easing = WLR_EASING_SPRING,
+                .damping_ratio = 1.0,
+                .stiffness = 1200.0,
+                .epsilon = 0.001,
+            };
+            wlr_scene_animate_position(server.animator,
+                &child->layers.tiling->node,
+                old_tx, old_ty, new_tx, new_ty, &cfg, NULL, NULL);
+          }
         }
 
         wlr_scene_node_set_position(&child->layers.tiling->node, new_tx,
@@ -692,7 +706,6 @@ static void arrange_output(struct sway_output *output, int width, int height) {
         arrange_workspace_tiling(child, area->width - gaps->left - gaps->right,
                                  area->height - gaps->top - gaps->bottom);
         arrange_workspace_floating(child);
-        sway_anim_sync();
       }
     } else {
       wlr_scene_node_set_enabled(&child->layers.tiling->node, false);

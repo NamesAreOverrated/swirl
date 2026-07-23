@@ -3,11 +3,12 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/log.h>
 #include "log.h"
+#include "sway/server.h"
 #include "sway/desktop/transaction.h"
 #include "sway/config.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
-#include "sway/tree/animation.h"
+#include <wlr/types/wlr_scene_animation.h>
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"
 #include "sway/tree/view.h"
@@ -164,16 +165,18 @@ void column_scroll_vert_to(struct sway_container *col,
 
 	if (col->content_tree) {
 		double from_y = col->content_tree->node.y;
-		struct sway_prop_config cfg = {
-			.type = SWAY_ANIM_SPRING,
+		double to_y = -new_scroll_y;
+		struct wlr_scene_anim_spec cfg = {
+			.easing = WLR_EASING_SPRING,
 			.damping_ratio = 1.0,
 			.stiffness = 1200.0,
 			.epsilon = 0.001,
 		};
-		sway_anim_move(&col->content_tree->node,
-			0, from_y,
-			0, -new_scroll_y,
-			cfg);
+		wlr_scene_animate_position(server.animator,
+			&col->content_tree->node,
+			col->content_tree->node.x, from_y,
+			col->content_tree->node.x, to_y,
+			&cfg, NULL, NULL);
 	}
 
 	node_set_dirty(&col->node);

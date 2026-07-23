@@ -31,7 +31,7 @@
 #include "sway/server.h"
 #include "sway/sway_text_node.h"
 #include "sway/tree/arrange.h"
-#include "sway/tree/animation.h"
+#include <wlr/types/wlr_scene_animation.h>
 #include "sway/tree/column.h"
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"
@@ -915,6 +915,29 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 		} else if (container->pending.workspace) {
 			arrange_workspace(container->pending.workspace);
 		}
+	}
+
+	// Open animation: scale from 88% to 100%, fade from 0 to 1
+	if (server.animator && container->scene_tree && container->pending.width > 0) {
+		struct wlr_scene_node *sn = &container->scene_tree->node;
+
+		struct wlr_scene_node_visual init = {
+			.scale_x = 0.88f,
+			.scale_y = 0.88f,
+			.opacity = 0.0f,
+		};
+		wlr_scene_node_set_visual(sn, &init);
+
+		struct wlr_scene_node_visual to = {
+			.scale_x = 1.0f,
+			.scale_y = 1.0f,
+			.opacity = 1.0f,
+		};
+		struct wlr_scene_anim_spec spec = {
+			.easing = WLR_EASING_EASE_OUT_CUBIC,
+			.duration_ms = 150.0,
+		};
+		wlr_scene_animate(server.animator, sn, &to, &spec, NULL, NULL);
 	}
 
 	view_execute_criteria(view);
