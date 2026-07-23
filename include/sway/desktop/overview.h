@@ -6,6 +6,7 @@
 
 bool overview_is_active(void);
 void overview_toggle(void);
+void overview_toggle_all(void);
 bool overview_handle_key(xkb_keysym_t sym);
 
 #endif

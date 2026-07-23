@@ -31,6 +31,7 @@ struct overview_thumbnail {
   struct wlr_scene_buffer *sb;
   struct wlr_scene_buffer *badge_sb;
   struct sway_container *con;
+  struct sway_workspace *ws;
   int w, h;
   float origin_x, origin_y;
 };
@@ -47,7 +48,15 @@ static struct {
   struct sway_seat *seat;
 } state;
 
+static void overview_get_origin(struct sway_container *con,
+                                struct sway_output *output,
+                                struct sway_workspace *active_ws,
+                                float *ox, float *oy);
+
 static void overview_thumbnail_create(struct sway_container *con,
+                                      struct sway_workspace *ws,
+                                      struct sway_output *output,
+                                      struct sway_workspace *active_ws,
                                       struct wlr_renderer *renderer,
                                       struct wlr_allocator *alloc,
                                       const struct wlr_drm_format *fmt,
@@ -137,11 +146,9 @@ static void overview_thumbnail_create(struct sway_container *con,
   }
   t->w = scw;
   t->h = sch;
-  struct wlr_box sbox;
-  container_get_screen_box(con, &sbox);
-  t->origin_x = sbox.x;
-  t->origin_y = sbox.y;
+  overview_get_origin(con, output, active_ws, &t->origin_x, &t->origin_y);
   t->con = con;
+  t->ws = ws;
 
   int badge_w = (int)(48 * scale);
   int badge_h = (int)(48 * scale);
@@ -222,18 +229,33 @@ static void overview_thumbnail_create(struct sway_container *con,
   }
 }
 
+static void overview_get_origin(struct sway_container *con,
+                                struct sway_output *output,
+                                struct sway_workspace *active_ws,
+                                float *ox, float *oy) {
+  struct wlr_box sbox;
+  container_get_screen_box(con, &sbox);
+  *ox = sbox.x;
+  *oy = sbox.y;
+}
+
 static void overview_collect(struct sway_container *con,
+                             struct sway_workspace *ws,
+                             struct sway_output *output,
+                             struct sway_workspace *active_ws,
                              struct wlr_renderer *renderer,
                              struct wlr_allocator *alloc,
                              const struct wlr_drm_format *fmt,
                              float scale, int bt, int *idx) {
   if (con->view && con->view->saved_buffer) {
     (*idx)++;
-    overview_thumbnail_create(con, renderer, alloc, fmt, scale, bt, *idx);
+    overview_thumbnail_create(con, ws, output, active_ws,
+                              renderer, alloc, fmt, scale, bt, *idx);
     return;
   }
   for (int i = 0; i < con->current.children->length; i++) {
     overview_collect(con->current.children->items[i],
+                     ws, output, active_ws,
                      renderer, alloc, fmt, scale, bt, idx);
   }
 }
@@ -263,6 +285,11 @@ bool overview_handle_key(xkb_keysym_t sym) {
           i++;
         }
         if (t && t->con && t->con != focus) {
+          struct sway_workspace *active_ws = output_get_active_workspace(
+              root->outputs->items[0]);
+          if (t->ws != active_ws) {
+            workspace_switch(t->ws);
+          }
           struct sway_container *focus_col = container_toplevel_ancestor(focus);
           struct sway_container *target_col =
               container_toplevel_ancestor(t->con);
@@ -298,126 +325,96 @@ bool overview_handle_key(xkb_keysym_t sym) {
   return false;
 }
 
-void overview_toggle(void) {
-  struct sway_output *output = NULL;
-  if (root && root->outputs && root->outputs->length > 0) {
-    output = root->outputs->items[0];
-  }
-  if (!output) {
-    sway_log(SWAY_ERROR, "overview: no output");
-    return;
-  }
-
-  sway_log(SWAY_INFO, "OVERVIEW: toggle called, active=%d", overview_active);
-
-  if (overview_active) {
-    struct overview_thumbnail *t, *tmp;
-    int ndel = 0;
-    wl_list_for_each_safe(t, tmp, &state.thumbnails, link) {
-      ndel++;
-      wlr_scene_node_destroy(&t->sb->node);
-      wlr_scene_node_destroy(&t->badge_sb->node);
-      wl_list_remove(&t->link);
-      free(t);
-    }
-    sway_log(SWAY_INFO, "OVERVIEW: teardown %d thumbnails, bg=%p", ndel, state.bg);
-    state.n_thumbnails = 0;
-    if (state.bg) {
-      wlr_scene_node_destroy(&state.bg->node);
-      state.bg = NULL;
-    }
-    wlr_scene_node_set_enabled(&root->layers.overview->node, false);
-    overview_active = false;
-    return;
-  }
-
-  struct sway_workspace *ws = output_get_active_workspace(output);
-  if (!ws) {
-    sway_log(SWAY_ERROR, "OVERVIEW: no workspace");
-    return;
-  }
-
-  state.seat = input_manager_current_seat();
-  state.focus_con = seat_get_focused_container(state.seat);
-  state.digit_buf = 0;
-  state.digit_count = 0;
-
-  float scale = output->wlr_output->scale;
-  struct wlr_renderer *renderer = output->wlr_output->renderer;
-  struct wlr_allocator *alloc = output->wlr_output->allocator;
-  const struct wlr_drm_format *fmt = NULL;
-  if (output->wlr_output->swapchain) {
-    fmt = &output->wlr_output->swapchain->format;
-  }
-  if (!fmt) {
-    sway_log(SWAY_ERROR, "OVERVIEW: no swapchain format");
-    return;
-  }
-
-  int ow = (int)(output->wlr_output->width / scale);
-  int oh = (int)(output->wlr_output->height / scale);
-  int ox = (int)(output->scene_output->x);
-  int oy = (int)(output->scene_output->y);
-
-  sway_log(SWAY_INFO, "OVERVIEW: output %dx%d+%d+%d scale=%.1f", ow, oh, ox, oy, scale);
-
-  state.bg = wlr_scene_rect_create(root->layers.overview, ow, oh,
-                                   (float[4]){0.0, 0.0, 0.0, 0.6});
-  if (state.bg) {
-    wlr_scene_node_set_position(&state.bg->node, ox, oy);
-    sway_log(SWAY_INFO, "OVERVIEW: bg created at %dx%d+%d+%d", ow, oh, ox, oy);
-  } else {
-    sway_log(SWAY_ERROR, "OVERVIEW: bg creation FAILED");
-  }
-
-  wl_list_init(&state.thumbnails);
-  state.n_thumbnails = 0;
-
-  int bt = 0;
-  if (config->border == B_PIXEL || config->border == B_NORMAL) {
-    bt = (int)(config->border_thickness * scale);
-  }
-  sway_log(SWAY_INFO, "OVERVIEW: border_thickness=%d bt=%d", config->border_thickness, bt);
-
-  int con_idx = 0;
+static void overview_collect_workspace(struct sway_workspace *ws,
+                                       struct sway_output *output,
+                                       struct sway_workspace *active_ws,
+                                       struct wlr_renderer *renderer,
+                                       struct wlr_allocator *alloc,
+                                       const struct wlr_drm_format *fmt,
+                                       float scale, int bt, int *con_idx) {
   struct wlr_scene_node *top_node;
   wl_list_for_each(top_node, &ws->layers.tiling->children, link) {
     struct sway_container *top = scene_descriptor_try_get(top_node,
         SWAY_SCENE_DESC_CONTAINER);
     if (top) {
-      overview_collect(top, renderer, alloc, fmt, scale, bt, &con_idx);
+      overview_collect(top, ws, output, active_ws,
+                       renderer, alloc, fmt, scale, bt, con_idx);
     }
   }
+}
 
+static void overview_layout_and_enable(struct sway_output *output,
+                                       bool multi_ws) {
+  struct overview_thumbnail *t;
   int n = state.n_thumbnails;
-  sway_log(SWAY_INFO, "OVERVIEW: %d thumbnails created", n);
+  float scale = output->wlr_output->scale;
+  int ow = (int)(output->wlr_output->width / scale);
+  int oh = (int)(output->wlr_output->height / scale);
+  int ox = (int)(output->scene_output->x);
+  int oy = (int)(output->scene_output->y);
 
   if (n == 0) {
-    sway_log(SWAY_INFO, "OVERVIEW: no thumbnails, enabling layer with bg only");
     wlr_scene_node_set_enabled(&root->layers.overview->node, true);
     overview_active = true;
     return;
   }
 
+  #define MAX_WS 64
+  struct {
+    struct sway_workspace *ws;
+    float min_y, max_y, y_offset;
+  } ws_info[MAX_WS];
+  int n_ws = 0;
+
+  if (multi_ws) {
+    wl_list_for_each(t, &state.thumbnails, link) {
+      int wi;
+      for (wi = 0; wi < n_ws; wi++) {
+        if (ws_info[wi].ws == t->ws) break;
+      }
+      if (wi == n_ws) {
+        ws_info[wi].ws = t->ws;
+        ws_info[wi].min_y = INFINITY;
+        ws_info[wi].max_y = -INFINITY;
+        n_ws++;
+      }
+      float th = (float)t->h / scale;
+      if (t->origin_y < ws_info[wi].min_y) ws_info[wi].min_y = t->origin_y;
+      if (t->origin_y + th > ws_info[wi].max_y) ws_info[wi].max_y = t->origin_y + th;
+    }
+
+    float ws_gap = 16.0f;
+    float cur = 0;
+    for (int wi = 0; wi < n_ws; wi++) {
+      ws_info[wi].y_offset = cur;
+      cur += ws_info[wi].max_y - ws_info[wi].min_y + ws_gap;
+    }
+  }
+
   float min_x = INFINITY, min_y = INFINITY, max_x = -INFINITY, max_y = -INFINITY;
-  struct overview_thumbnail *t;
   wl_list_for_each(t, &state.thumbnails, link) {
     float tx = t->origin_x;
-    float ty = t->origin_y;
     float tw = (float)t->w / scale;
     float th = (float)t->h / scale;
     if (tx < min_x) min_x = tx;
-    if (ty < min_y) min_y = ty;
+
+    float oy = t->origin_y;
+    if (multi_ws) {
+      for (int wi = 0; wi < n_ws; wi++) {
+        if (ws_info[wi].ws == t->ws) {
+          oy = ws_info[wi].y_offset + (t->origin_y - ws_info[wi].min_y);
+          break;
+        }
+      }
+    }
+    if (oy < min_y) min_y = oy;
     if (tx + tw > max_x) max_x = tx + tw;
-    if (ty + th > max_y) max_y = ty + th;
+    if (oy + th > max_y) max_y = oy + th;
   }
 
   float src_w = max_x - min_x;
   float src_h = max_y - min_y;
-  if (src_w <= 0 || src_h <= 0) {
-    sway_log(SWAY_ERROR, "OVERVIEW: invalid bounds");
-    return;
-  }
+  if (src_w <= 0 || src_h <= 0) return;
   float avail_w = (float)ow * 0.9f;
   float avail_h = (float)oh * 0.85f;
   float fit = fminf(1.0f, fminf(avail_w / src_w, avail_h / src_h));
@@ -426,17 +423,20 @@ void overview_toggle(void) {
   float base_x = ox + (ow - dst_w) / 2.0f;
   float base_y = oy + (oh - dst_h) / 2.0f;
 
-  sway_log(SWAY_INFO, "OVERVIEW: bounds (%.0f,%.0f)-(%.0f,%.0f) fit=%.3f base=(%.0f,%.0f)",
-           min_x, min_y, max_x, max_y, fit, base_x, base_y);
-
   wl_list_for_each(t, &state.thumbnails, link) {
+    float oy = t->origin_y;
+    if (multi_ws) {
+      for (int wi = 0; wi < n_ws; wi++) {
+        if (ws_info[wi].ws == t->ws) {
+          oy = ws_info[wi].y_offset + (t->origin_y - ws_info[wi].min_y);
+          break;
+        }
+      }
+    }
     float tw = (float)t->w / scale * fit;
     float th = (float)t->h / scale * fit;
     float tx = base_x + (t->origin_x - min_x) * fit;
-    float ty = base_y + (t->origin_y - min_y) * fit;
-
-    sway_log(SWAY_INFO, "OVERVIEW:   thumb pos (%.0f, %.0f) size (%.0f, %.0f) origin=(%.0f,%.0f)",
-             tx, ty, tw, th, t->origin_x, t->origin_y);
+    float ty = base_y + (oy - min_y) * fit;
 
     wlr_scene_buffer_set_dest_size(t->sb, (int)tw, (int)th);
     wlr_scene_node_set_position(&t->sb->node, (int)tx, (int)ty);
@@ -453,7 +453,113 @@ void overview_toggle(void) {
     }
   }
 
-  sway_log(SWAY_INFO, "OVERVIEW: enabling layer and activating");
   wlr_scene_node_set_enabled(&root->layers.overview->node, true);
   overview_active = true;
+}
+
+static void overview_teardown(void) {
+  struct overview_thumbnail *t, *tmp;
+  wl_list_for_each_safe(t, tmp, &state.thumbnails, link) {
+    wlr_scene_node_destroy(&t->sb->node);
+    wlr_scene_node_destroy(&t->badge_sb->node);
+    wl_list_remove(&t->link);
+    free(t);
+  }
+  state.n_thumbnails = 0;
+  if (state.bg) {
+    wlr_scene_node_destroy(&state.bg->node);
+    state.bg = NULL;
+  }
+  wlr_scene_node_set_enabled(&root->layers.overview->node, false);
+  overview_active = false;
+}
+
+static bool overview_setup(struct sway_output *output) {
+  state.seat = input_manager_current_seat();
+  state.focus_con = seat_get_focused_container(state.seat);
+  state.digit_buf = 0;
+  state.digit_count = 0;
+
+  float scale = output->wlr_output->scale;
+  int ow = (int)(output->wlr_output->width / scale);
+  int oh = (int)(output->wlr_output->height / scale);
+  int ox = (int)(output->scene_output->x);
+  int oy = (int)(output->scene_output->y);
+
+  state.bg = wlr_scene_rect_create(root->layers.overview, ow, oh,
+                                   (float[4]){0.0, 0.0, 0.0, 0.6});
+  if (state.bg) {
+    wlr_scene_node_set_position(&state.bg->node, ox, oy);
+  }
+
+  wl_list_init(&state.thumbnails);
+  state.n_thumbnails = 0;
+  return true;
+}
+
+void overview_toggle(void) {
+  struct sway_output *output = NULL;
+  if (root && root->outputs && root->outputs->length > 0) {
+    output = root->outputs->items[0];
+  }
+  if (!output) return;
+
+  if (overview_active) { overview_teardown(); return; }
+
+  struct sway_workspace *ws = output_get_active_workspace(output);
+  if (!ws) return;
+
+  if (!overview_setup(output)) return;
+
+  float scale = output->wlr_output->scale;
+  struct wlr_renderer *renderer = output->wlr_output->renderer;
+  struct wlr_allocator *alloc = output->wlr_output->allocator;
+  const struct wlr_drm_format *fmt = output->wlr_output->swapchain
+      ? &output->wlr_output->swapchain->format : NULL;
+  if (!fmt) return;
+
+  int bt = 0;
+  if (config->border == B_PIXEL || config->border == B_NORMAL) {
+    bt = (int)(config->border_thickness * scale);
+  }
+
+  int con_idx = 0;
+  overview_collect_workspace(ws, output, ws,
+                             renderer, alloc, fmt, scale, bt, &con_idx);
+
+  overview_layout_and_enable(output, false);
+}
+
+void overview_toggle_all(void) {
+  struct sway_output *output = NULL;
+  if (root && root->outputs && root->outputs->length > 0) {
+    output = root->outputs->items[0];
+  }
+  if (!output) return;
+
+  if (overview_active) { overview_teardown(); return; }
+
+  if (!overview_setup(output)) return;
+
+  float scale = output->wlr_output->scale;
+  struct wlr_renderer *renderer = output->wlr_output->renderer;
+  struct wlr_allocator *alloc = output->wlr_output->allocator;
+  const struct wlr_drm_format *fmt = output->wlr_output->swapchain
+      ? &output->wlr_output->swapchain->format : NULL;
+  if (!fmt) return;
+
+  int bt = 0;
+  if (config->border == B_PIXEL || config->border == B_NORMAL) {
+    bt = (int)(config->border_thickness * scale);
+  }
+
+  struct sway_workspace *active_ws = output_get_active_workspace(output);
+  int con_idx = 0;
+  for (int i = 0; i < output->workspaces->length; i++) {
+    struct sway_workspace *ws = output->workspaces->items[i];
+    overview_collect_workspace(ws, output, active_ws,
+                               renderer, alloc, fmt, scale, bt, &con_idx);
+  }
+
+  overview_layout_and_enable(output, true);
 }
