@@ -451,6 +451,8 @@ static void handle_commit(struct wl_listener *listener, void *data) {
 			view_send_frame_done(view);
 		}
 	}
+
+	view_update_saved_buffer(view);
 }
 
 static void handle_destroy(struct wl_listener *listener, void *data) {

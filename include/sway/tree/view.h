@@ -70,6 +70,7 @@ struct sway_view {
 	struct wlr_scene_tree *content_tree;
 	struct wlr_scene_tree *saved_surface_tree;
 	struct wlr_scene_buffer *output_handler;
+	struct wlr_buffer *saved_buffer;
 
 	struct wl_listener outputs_update;
 
@@ -356,6 +357,8 @@ void view_set_urgent(struct sway_view *view, bool enable);
 bool view_is_urgent(struct sway_view *view);
 
 void view_remove_saved_buffer(struct sway_view *view);
+
+void view_update_saved_buffer(struct sway_view *view);
 
 void view_save_buffer(struct sway_view *view);
 

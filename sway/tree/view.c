@@ -109,6 +109,7 @@ bool view_init(struct sway_view *view, enum sway_view_type type,
 	view->type = type;
 	view->impl = impl;
 	view->executed_criteria = create_list();
+	view->saved_buffer = NULL;
 	view->allow_request_urgent = true;
 	view->shortcuts_inhibit = SHORTCUTS_INHIBIT_DEFAULT;
 	view->tearing_mode = TEARING_WINDOW_HINT;
@@ -137,6 +138,9 @@ void view_destroy(struct sway_view *view) {
 	list_free(view->executed_criteria);
 
 	view_assign_ctx(view, NULL);
+	if (view->saved_buffer) {
+		wlr_buffer_unlock(view->saved_buffer);
+	}
 	wlr_scene_node_destroy(&view->image_capture_scene->tree.node);
 	wlr_scene_node_destroy(&view->scene_tree->node);
 	if (view->impl->destroy) {
@@ -1288,6 +1292,17 @@ void view_set_urgent(struct sway_view *view, bool enable) {
 
 bool view_is_urgent(struct sway_view *view) {
 	return view->urgent.tv_sec || view->urgent.tv_nsec;
+}
+
+void view_update_saved_buffer(struct sway_view *view) {
+	if (view->saved_buffer) {
+		wlr_buffer_unlock(view->saved_buffer);
+	}
+	view->saved_buffer = NULL;
+	if (!view->surface || !view->surface->buffer) {
+		return;
+	}
+	view->saved_buffer = wlr_buffer_lock(&view->surface->buffer->base);
 }
 
 void view_remove_saved_buffer(struct sway_view *view) {
