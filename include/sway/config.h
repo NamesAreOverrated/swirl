@@ -570,6 +570,7 @@ struct sway_config {
 	int corner_radius;
 	bool shadow_enabled;
 	int shadow_blur_radius;
+	int shadow_offset;
 	float shadow_opacity;
 	float shadow_color[4];
 	float default_column_width_fraction;
