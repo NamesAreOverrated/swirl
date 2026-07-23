@@ -46,6 +46,8 @@ static struct {
   int digit_count;
   struct sway_container *focus_con;
   struct sway_seat *seat;
+  enum overview_scope scope;
+  enum overview_action action;
 } state;
 
 static void overview_get_origin(struct sway_container *con,
@@ -262,7 +264,53 @@ static void overview_collect(struct sway_container *con,
 
 bool overview_is_active(void) { return overview_active; }
 
+void overview_set_params(enum overview_scope scope,
+		enum overview_action action) {
+	state.scope = scope;
+	state.action = action;
+}
 
+
+
+static void overview_action_focus(struct overview_thumbnail *t) {
+  if (t->ws != output_get_active_workspace(root->outputs->items[0])) {
+    workspace_switch(t->ws);
+  }
+  seat_set_focus_container(state.seat, t->con);
+}
+
+static void overview_action_pull(struct overview_thumbnail *t) {
+  struct sway_container *focus = state.focus_con;
+  struct sway_workspace *active_ws = output_get_active_workspace(root->outputs->items[0]);
+  struct sway_container *focus_col = container_toplevel_ancestor(focus);
+  struct sway_container *target_col = container_toplevel_ancestor(t->con);
+  if (focus_col != target_col) {
+    int fi = list_find(active_ws->tiling, focus_col);
+    if (fi >= 0) {
+      struct sway_workspace *old_ws = target_col->pending.workspace;
+      int idx = fi + 1;
+      workspace_fit_new_column(active_ws, target_col, idx);
+      workspace_insert_column(active_ws, target_col, idx);
+      arrange_workspace(active_ws);
+      if (old_ws && old_ws != active_ws) arrange_workspace(old_ws);
+    }
+  }
+  seat_set_focus_container(state.seat, t->con);
+}
+
+static void overview_action_swap(struct overview_thumbnail *t) {
+  struct sway_container *focus = state.focus_con;
+  struct sway_container *focus_col = container_toplevel_ancestor(focus);
+  struct sway_container *target_col = container_toplevel_ancestor(t->con);
+  if (focus_col != target_col) {
+    workspace_swap_columns(focus_col, target_col);
+    struct sway_workspace *ws_a = focus_col->pending.workspace;
+    struct sway_workspace *ws_b = target_col->pending.workspace;
+    arrange_workspace(ws_a);
+    if (ws_b != ws_a) arrange_workspace(ws_b);
+  }
+  seat_set_focus_container(state.seat, t->con);
+}
 
 bool overview_handle_key(xkb_keysym_t sym) {
   if (!overview_active)
@@ -285,23 +333,17 @@ bool overview_handle_key(xkb_keysym_t sym) {
           i++;
         }
         if (t && t->con && t->con != focus) {
-          struct sway_workspace *active_ws = output_get_active_workspace(
-              root->outputs->items[0]);
-          if (t->ws != active_ws) {
-            workspace_switch(t->ws);
+          switch (state.action) {
+          case OVERVIEW_FOCUS:
+            overview_action_focus(t);
+            break;
+          case OVERVIEW_PULL:
+            overview_action_pull(t);
+            break;
+          case OVERVIEW_SWAP:
+            overview_action_swap(t);
+            break;
           }
-          struct sway_container *focus_col = container_toplevel_ancestor(focus);
-          struct sway_container *target_col =
-              container_toplevel_ancestor(t->con);
-          if (focus_col != target_col) {
-            struct sway_workspace *ws = target_col->pending.workspace;
-            int fi = list_find(ws->tiling, focus_col);
-            if (fi >= 0) {
-              workspace_insert_column(ws, target_col, fi + 1);
-              arrange_workspace(ws);
-            }
-          }
-          seat_set_focus_container(state.seat, t->con);
         }
       }
       overview_toggle();
@@ -506,60 +548,34 @@ void overview_toggle(void) {
 
   if (overview_active) { overview_teardown(); return; }
 
-  struct sway_workspace *ws = output_get_active_workspace(output);
-  if (!ws) return;
-
-  if (!overview_setup(output)) return;
-
-  float scale = output->wlr_output->scale;
-  struct wlr_renderer *renderer = output->wlr_output->renderer;
-  struct wlr_allocator *alloc = output->wlr_output->allocator;
-  const struct wlr_drm_format *fmt = output->wlr_output->swapchain
-      ? &output->wlr_output->swapchain->format : NULL;
-  if (!fmt) return;
-
-  int bt = 0;
-  if (config->border == B_PIXEL || config->border == B_NORMAL) {
-    bt = (int)(config->border_thickness * scale);
-  }
-
-  int con_idx = 0;
-  overview_collect_workspace(ws, output, ws,
-                             renderer, alloc, fmt, scale, bt, &con_idx);
-
-  overview_layout_and_enable(output, false);
-}
-
-void overview_toggle_all(void) {
-  struct sway_output *output = NULL;
-  if (root && root->outputs && root->outputs->length > 0) {
-    output = root->outputs->items[0];
-  }
-  if (!output) return;
-
-  if (overview_active) { overview_teardown(); return; }
-
-  if (!overview_setup(output)) return;
-
-  float scale = output->wlr_output->scale;
-  struct wlr_renderer *renderer = output->wlr_output->renderer;
-  struct wlr_allocator *alloc = output->wlr_output->allocator;
-  const struct wlr_drm_format *fmt = output->wlr_output->swapchain
-      ? &output->wlr_output->swapchain->format : NULL;
-  if (!fmt) return;
-
-  int bt = 0;
-  if (config->border == B_PIXEL || config->border == B_NORMAL) {
-    bt = (int)(config->border_thickness * scale);
-  }
-
   struct sway_workspace *active_ws = output_get_active_workspace(output);
-  int con_idx = 0;
-  for (int i = 0; i < output->workspaces->length; i++) {
-    struct sway_workspace *ws = output->workspaces->items[i];
-    overview_collect_workspace(ws, output, active_ws,
-                               renderer, alloc, fmt, scale, bt, &con_idx);
+  if (!active_ws) return;
+
+  if (!overview_setup(output)) return;
+
+  float scale = output->wlr_output->scale;
+  struct wlr_renderer *renderer = output->wlr_output->renderer;
+  struct wlr_allocator *alloc = output->wlr_output->allocator;
+  const struct wlr_drm_format *fmt = output->wlr_output->swapchain
+      ? &output->wlr_output->swapchain->format : NULL;
+  if (!fmt) return;
+
+  int bt = 0;
+  if (config->border == B_PIXEL || config->border == B_NORMAL) {
+    bt = (int)(config->border_thickness * scale);
   }
 
-  overview_layout_and_enable(output, true);
+  int con_idx = 0;
+  if (state.scope == OVERVIEW_ALL) {
+    for (int i = 0; i < output->workspaces->length; i++) {
+      struct sway_workspace *ws = output->workspaces->items[i];
+      overview_collect_workspace(ws, output, active_ws,
+                                 renderer, alloc, fmt, scale, bt, &con_idx);
+    }
+    overview_layout_and_enable(output, true);
+  } else {
+    overview_collect_workspace(active_ws, output, active_ws,
+                               renderer, alloc, fmt, scale, bt, &con_idx);
+    overview_layout_and_enable(output, false);
+  }
 }

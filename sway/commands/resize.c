@@ -106,7 +106,7 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 	int candidates[32];
 	double occupied;
 	int n_candidates = viewport_scan_visible(ws, focus_idx, col_idx,
-		candidates, 32, &occupied);
+		false, candidates, 32, &occupied);
 	sway_log(SWAY_DEBUG, "[resize] occupied=%.0f gap=%d n_candidates=%d",
 		occupied, ws->gaps_inner, n_candidates);
 

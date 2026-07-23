@@ -4,9 +4,21 @@
 #include <stdbool.h>
 #include <xkbcommon/xkbcommon.h>
 
+enum overview_scope {
+	OVERVIEW_CURRENT,
+	OVERVIEW_ALL,
+};
+
+enum overview_action {
+	OVERVIEW_FOCUS,
+	OVERVIEW_PULL,
+	OVERVIEW_SWAP,
+};
+
 bool overview_is_active(void);
+void overview_set_params(enum overview_scope scope,
+		enum overview_action action);
 void overview_toggle(void);
-void overview_toggle_all(void);
 bool overview_handle_key(xkb_keysym_t sym);
 
 #endif

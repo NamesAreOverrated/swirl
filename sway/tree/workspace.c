@@ -1008,60 +1008,7 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 
 	// Fit new column at default width within the viewport
 	if (was_view && workspace->tiling->length > 0) {
-		double default_w = workspace_width_fraction(workspace,
-			config->default_column_width_fraction);
-		double min_w = workspace_width_fraction(workspace,
-			config->min_column_width_fraction);
-		int focus_idx = workspace->focused_column_idx >= 0
-			? workspace->focused_column_idx : idx - 1;
-		if (focus_idx < 0) focus_idx = 0;
-		if (focus_idx >= workspace->tiling->length)
-			focus_idx = workspace->tiling->length - 1;
-
-		double occupied;
-		int vis_candidates[32];
-		int n_vis = viewport_scan_visible(workspace, focus_idx, -1,
-			vis_candidates, 32, &occupied);
-
-		double free = fmax(0, workspace->width - occupied - workspace->gaps_inner);
-		double target_w;
-
-		sway_log(SWAY_DEBUG, "[new-window] n_cols=%d focus_idx=%d n_vis=%d "
-			"occupied=%.0f default_w=%.0f min_w=%.0f free=%.0f",
-			workspace->tiling->length, focus_idx, n_vis,
-			occupied, default_w, min_w, free);
-
-		if (free >= default_w) {
-			target_w = default_w;
-			sway_log(SWAY_DEBUG, "[new-window] free >= default: %.0f >= %.0f -> target=default_w=%.0f",
-				free, default_w, default_w);
-		} else if (free >= min_w) {
-			target_w = free;
-			sway_log(SWAY_DEBUG, "[new-window] free >= min: %.0f >= %.0f -> target=free=%.0f",
-				free, min_w, free);
-		} else {
-			target_w = default_w;
-			double overflow = occupied + workspace->gaps_inner + target_w
-				- workspace->width;
-			sway_log(SWAY_DEBUG, "[new-window] default doesn't fit: overflow=%.0f "
-				"absorbing farthest", overflow);
-			if (overflow > 0 && n_vis > 0) {
-				viewport_absorb_farthest(workspace, vis_candidates, n_vis,
-					focus_idx, &overflow, min_w);
-				sway_log(SWAY_DEBUG, "[new-window] after farthest absorb remaining=%.0f",
-					overflow);
-			}
-			// New column absorbs any remainder (never below min_w)
-			if (overflow > 0) {
-				target_w = fmax(min_w, default_w - overflow);
-				sway_log(SWAY_DEBUG, "[new-window] shaving new col: "
-					"default_w=%.0f - overflow=%.0f -> target_w=%.0f",
-					default_w, overflow, target_w);
-			}
-		}
-
-		column_set_width_px(con, target_w);
-		sway_log(SWAY_DEBUG, "[new-window] col width set to %.0f", target_w);
+		workspace_fit_new_column(workspace, con, idx);
 	}
 
 	list_insert(workspace->tiling, idx, con);
@@ -1445,4 +1392,107 @@ void workspace_update_focused_column_idx(struct sway_workspace *ws) {
 		(void *)seat_get_focused_container(seat), (void *)con, idx,
 		ws->tiling->length);
 	ws->focused_column_idx = idx;
+}
+
+void workspace_swap_columns(struct sway_container *a, struct sway_container *b) {
+	if (a == b) return;
+	struct sway_workspace *ws_a = a->pending.workspace;
+	struct sway_workspace *ws_b = b->pending.workspace;
+	int idx_a = list_find(ws_a->tiling, a);
+	int idx_b = list_find(ws_b->tiling, b);
+	if (idx_a < 0 || idx_b < 0) return;
+	double wf_a = a->width_fraction;
+	double wf_b = b->width_fraction;
+	if (ws_a == ws_b) {
+		list_del(ws_a->tiling, idx_a);
+		int adj = idx_b > idx_a ? idx_b - 1 : idx_b;
+		list_insert(ws_a->tiling, adj, a);
+		int nb = list_find(ws_a->tiling, b);
+		if (nb >= 0) {
+			list_del(ws_a->tiling, nb);
+			list_insert(ws_a->tiling, idx_a, b);
+		}
+		a->width_fraction = wf_b;
+		b->width_fraction = wf_a;
+		node_set_dirty(&ws_a->node);
+	} else {
+		container_detach(a);
+		container_detach(b);
+		if (idx_a > ws_b->tiling->length) idx_a = ws_b->tiling->length;
+		if (idx_b > ws_a->tiling->length) idx_b = ws_a->tiling->length;
+		list_insert(ws_b->tiling, idx_a, a);
+		list_insert(ws_a->tiling, idx_b, b);
+		a->pending.workspace = ws_b;
+		b->pending.workspace = ws_a;
+		a->width_fraction = wf_b;
+		b->width_fraction = wf_a;
+		container_for_each_child(a, set_workspace, NULL);
+		container_for_each_child(b, set_workspace, NULL);
+		container_handle_fullscreen_reparent(a);
+		container_handle_fullscreen_reparent(b);
+		node_set_dirty(&ws_a->node);
+		node_set_dirty(&ws_b->node);
+	}
+	workspace_update_representation(ws_a);
+	if (ws_b != ws_a) workspace_update_representation(ws_b);
+	node_set_dirty(&a->node);
+	node_set_dirty(&b->node);
+}
+
+void workspace_fit_new_column(struct sway_workspace *ws,
+		struct sway_container *col, int idx) {
+	double default_w = workspace_width_fraction(ws,
+		config->default_column_width_fraction);
+	double min_w = workspace_width_fraction(ws,
+		config->min_column_width_fraction);
+	int focus_idx = ws->focused_column_idx >= 0
+		? ws->focused_column_idx : idx - 1;
+	if (focus_idx < 0) focus_idx = 0;
+	if (focus_idx >= ws->tiling->length)
+		focus_idx = ws->tiling->length - 1;
+
+	int exclude_idx = list_find(ws->tiling, col);
+	double occupied;
+	int vis_candidates[32];
+	int n_vis = viewport_scan_visible(ws, focus_idx, exclude_idx,
+		exclude_idx >= 0, vis_candidates, 32, &occupied);
+
+	double free = fmax(0, ws->width - occupied - ws->gaps_inner);
+	double target_w;
+
+	sway_log(SWAY_DEBUG, "[fit-column] n_cols=%d focus_idx=%d n_vis=%d "
+		"occupied=%.0f default_w=%.0f min_w=%.0f free=%.0f",
+		ws->tiling->length, focus_idx, n_vis,
+		occupied, default_w, min_w, free);
+
+	if (free >= default_w) {
+		target_w = default_w;
+		sway_log(SWAY_DEBUG, "[fit-column] free >= default: %.0f >= %.0f -> target=default_w=%.0f",
+			free, default_w, default_w);
+	} else if (free >= min_w) {
+		target_w = free;
+		sway_log(SWAY_DEBUG, "[fit-column] free >= min: %.0f >= %.0f -> target=free=%.0f",
+			free, min_w, free);
+	} else {
+		target_w = default_w;
+		double overflow = occupied + ws->gaps_inner + target_w
+			- ws->width;
+		sway_log(SWAY_DEBUG, "[fit-column] default doesn't fit: overflow=%.0f "
+			"absorbing farthest", overflow);
+		if (overflow > 0 && n_vis > 0) {
+			viewport_absorb_farthest(ws, vis_candidates, n_vis,
+				focus_idx, &overflow, min_w);
+			sway_log(SWAY_DEBUG, "[fit-column] after farthest absorb remaining=%.0f",
+				overflow);
+		}
+		if (overflow > 0) {
+			target_w = fmax(min_w, default_w - overflow);
+			sway_log(SWAY_DEBUG, "[fit-column] shaving new col: "
+				"default_w=%.0f - overflow=%.0f -> target_w=%.0f",
+				default_w, overflow, target_w);
+		}
+	}
+
+	column_set_width_px(col, target_w);
+	sway_log(SWAY_DEBUG, "[fit-column] col width set to %.0f", target_w);
 }

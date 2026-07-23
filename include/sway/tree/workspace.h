@@ -149,6 +149,10 @@ struct sway_container *workspace_insert_tiling(struct sway_workspace *workspace,
 struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 		struct sway_container *con, int index);
 
+void workspace_swap_columns(struct sway_container *a, struct sway_container *b);
+void workspace_fit_new_column(struct sway_workspace *ws,
+		struct sway_container *col, int idx);
+
 struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 		struct sway_container *view, struct sway_container *target,
 		enum wlr_edges edge, bool after);

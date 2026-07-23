@@ -263,19 +263,28 @@ void handle_focus_viewport(struct sway_seat *seat,
 }
 
 int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
-		int exclude_idx, int *candidates, int max_cand, double *out_occupied) {
+		int exclude_idx, bool exclude_occupied, int *candidates,
+		int max_cand, double *out_occupied) {
 	double sum = 0;
 	int n = 0;
 	int total_vis = 1;
 
 	struct sway_container *fc = ws->tiling->items[focus_idx];
-	sum += fc->pending.width;
+	if (exclude_occupied && focus_idx == exclude_idx) {
+		total_vis--;
+	} else {
+		sum += fc->pending.width;
+	}
 
 	for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
 		if (!viewport_column_is_visible(ws, i)) break;
 		struct sway_container *c = ws->tiling->items[i];
-		total_vis++;
-		sum += c->pending.width;
+		if (exclude_occupied && i == exclude_idx) {
+			total_vis--;
+		} else {
+			total_vis++;
+			sum += c->pending.width;
+		}
 		if (i != exclude_idx && n < max_cand)
 			candidates[n++] = i;
 	}
@@ -283,8 +292,12 @@ int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 	for (int i = focus_idx - 1; i >= 0; --i) {
 		if (!viewport_column_is_visible(ws, i)) break;
 		struct sway_container *c = ws->tiling->items[i];
-		total_vis++;
-		sum += c->pending.width;
+		if (exclude_occupied && i == exclude_idx) {
+			total_vis--;
+		} else {
+			total_vis++;
+			sum += c->pending.width;
+		}
 		if (i != exclude_idx && n < max_cand)
 			candidates[n++] = i;
 	}
