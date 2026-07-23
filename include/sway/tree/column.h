@@ -2,6 +2,7 @@
 #define _SWAY_COLUMN_H
 
 #include "sway/tree/container.h"
+#include "sway/tree/layout.h"
 #include "sway/tree/workspace.h"
 
 void column_set_width_px(struct sway_container *col, double width_px);
@@ -10,11 +11,10 @@ int column_remove(struct sway_container *col, bool grow_neighbors);
 
 static inline void column_set_width_fraction(struct sway_container *col,
 		double fraction) {
+	col->width_fraction = fraction;
 	struct sway_workspace *ws = col->pending.workspace;
-	if (ws && ws->width > 0) {
-		double usable = ws->width - ws->current_gaps.left
-			- ws->current_gaps.right;
-		column_set_width_px(col, fraction * usable);
+	if (ws) {
+		col->pending.width = workspace_width_fraction(ws, fraction);
 	}
 }
 
@@ -23,19 +23,16 @@ static inline void window_set_height_px(struct sway_container *win,
 	win->pending.height = height_px;
 	struct sway_workspace *ws = win->pending.workspace;
 	if (ws) {
-		double usable = ws->height - ws->current_gaps.top
-			- ws->current_gaps.bottom;
-		win->height_fraction = usable > 0 ? height_px / usable : 0;
+		win->height_fraction = workspace_height_to_fraction(ws, height_px);
 	}
 }
 
 static inline void window_set_height_fraction(struct sway_container *win,
 		double fraction) {
+	win->height_fraction = fraction;
 	struct sway_workspace *ws = win->pending.workspace;
 	if (ws) {
-		double usable = ws->height - ws->current_gaps.top
-			- ws->current_gaps.bottom;
-		window_set_height_px(win, fraction * usable);
+		win->pending.height = workspace_height_fraction(ws, fraction);
 	}
 }
 
