@@ -53,6 +53,21 @@ struct sway_node *node_at_coords(
 
 		scene_node = wlr_scene_node_at(&layer->node, lx, ly, sx, sy);
 		if (scene_node) {
+			// VFX nodes are visual-only overlays; try to find a content buffer
+			if (scene_node->type == WLR_SCENE_NODE_VFX && scene_node->parent) {
+				struct wlr_scene_node *child;
+				wl_list_for_each_reverse(child, &scene_node->parent->children, link) {
+					if (child == scene_node) {
+						continue;
+					}
+					struct wlr_scene_node *found = wlr_scene_node_at(
+						child, lx, ly, sx, sy);
+					if (found) {
+						scene_node = found;
+						break;
+					}
+				}
+			}
 			break;
 		}
 	}
