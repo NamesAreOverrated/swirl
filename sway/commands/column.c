@@ -11,7 +11,7 @@
 #include "sway/desktop/transaction.h"
 #include "log.h"
 
-struct cmd_results *cmd_column_take(int argc, char **argv) {
+struct cmd_results *cmd_take(int argc, char **argv) {
 	struct sway_container *con = config->handler_context.container;
 	if (!con || container_is_floating(con) ||
 			con->pending.fullscreen_mode != FULLSCREEN_NONE) {
@@ -42,7 +42,9 @@ struct cmd_results *cmd_column_take(int argc, char **argv) {
 		container_add_child(con, right);
 	}
 
+	double freed = right->pending.width;
 	(void)column_remove(right, false);
+	viewport_grow_evenly(ws, idx, freed);
 
 	node_set_dirty(&con->node);
 	arrange_workspace(ws);
@@ -50,7 +52,7 @@ struct cmd_results *cmd_column_take(int argc, char **argv) {
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
 
-struct cmd_results *cmd_column_release(int argc, char **argv) {
+struct cmd_results *cmd_release(int argc, char **argv) {
 	struct sway_container *con = config->handler_context.container;
 	if (!con || container_is_floating(con) ||
 			con->pending.fullscreen_mode != FULLSCREEN_NONE) {
@@ -86,9 +88,7 @@ struct cmd_results *cmd_column_release(int argc, char **argv) {
 	newcol->pending.layout = L_VERT;
 	newcol->pending.workspace = ws;
 
-	double col_width = workspace_clamp_column_width(ws,
-		workspace_view_remaining_width(ws, cidx));
-	column_set_width_px(newcol, col_width);
+	workspace_fit_new_column(ws, newcol, cidx + 1);
 
 	for (int i = children->length - 1; i >= start; --i) {
 		struct sway_container *child = children->items[i];
@@ -110,7 +110,7 @@ struct cmd_results *cmd_column_release(int argc, char **argv) {
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
 
-struct cmd_results *cmd_column_pop(int argc, char **argv) {
+struct cmd_results *cmd_pop(int argc, char **argv) {
 	struct sway_container *con = config->handler_context.container;
 	if (!con || container_is_floating(con) ||
 			con->pending.fullscreen_mode != FULLSCREEN_NONE) {
@@ -135,8 +135,11 @@ struct cmd_results *cmd_column_pop(int argc, char **argv) {
 		(void *)con, idx, col_w, gaps, ws->tiling->length);
 
 	list_del(ws->tiling, idx);
-	int focus_idx = viewport_grow_to_fill(ws, idx, col_w);
-	list_add(ws->tiling, con);
+	int focus_idx = viewport_grow_evenly(ws, idx, col_w);
+	int insert_at = viewport_first_off_screen(ws, true);
+	if (insert_at < 0) insert_at = ws->tiling->length;
+	if (insert_at > ws->tiling->length) insert_at = ws->tiling->length;
+	list_insert(ws->tiling, insert_at, con);
 
 	sway_log(SWAY_DEBUG, "[pop] after: focus_idx=%d n=%d con_idx=%d",
 		focus_idx, ws->tiling->length,

@@ -32,7 +32,10 @@ void viewport_absorb_farthest(struct sway_workspace *ws,
 
 int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 		double freed_width);
+int viewport_grow_evenly(struct sway_workspace *ws, int col_idx,
+		double freed_width);
 
 void viewport_visible_range(struct sway_workspace *ws, int *start, int *end);
+int viewport_first_off_screen(struct sway_workspace *ws, bool right);
 
 #endif

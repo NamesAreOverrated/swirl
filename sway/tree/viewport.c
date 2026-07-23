@@ -513,3 +513,35 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 	sway_log(SWAY_DEBUG, "[grow]   return focus_idx=%d", ret);
 	return ret;
 }
+
+int viewport_grow_evenly(struct sway_workspace *ws, int col_idx,
+		double freed_width) {
+	if (!ws || ws->tiling->length == 0 || freed_width <= 1) return -1;
+
+	int vs, ve;
+	viewport_visible_range(ws, &vs, &ve);
+	if (vs < 0 || ve < vs) return -1;
+
+	int n_vis = ve - vs + 1;
+	double give = freed_width / n_vis;
+	double given = 0;
+	for (int i = vs; i <= ve; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		double add = (i == ve) ? (freed_width - given) : give;
+		c->pending.width = fmin(c->pending.width + add, ws->width);
+		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
+		node_set_dirty(&c->node);
+		given += add;
+	}
+
+	return ve;
+}
+
+int viewport_first_off_screen(struct sway_workspace *ws, bool right) {
+	int vs, ve;
+	viewport_visible_range(ws, &vs, &ve);
+	if (vs < 0) {
+		return right ? ws->tiling->length : 0;
+	}
+	return right ? ve + 1 : vs - 1;
+}
