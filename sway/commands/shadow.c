@@ -26,13 +26,6 @@ struct cmd_results *cmd_shadow(int argc, char **argv) {
 			return cmd_results_new(CMD_INVALID, "shadow blur int invalid");
 		}
 		config->shadow_blur_radius = val;
-	} else if (strcmp(argv[0], "offset") == 0) {
-		char *err;
-		int val = (int)strtol(argv[1], &err, 10);
-		if (*err || val < 0) {
-			return cmd_results_new(CMD_INVALID, "shadow offset int invalid");
-		}
-		config->shadow_offset = val;
 	} else if (strcmp(argv[0], "opacity") == 0) {
 		char *err;
 		float val = strtof(argv[1], &err);
@@ -47,7 +40,7 @@ struct cmd_results *cmd_shadow(int argc, char **argv) {
 		}
 		color_to_rgba(config->shadow_color, color);
 	} else {
-		return cmd_results_new(CMD_INVALID, "Expected `shadow enabled|blur|offset|opacity|color'");
+		return cmd_results_new(CMD_INVALID, "Expected `shadow enabled|blur|opacity|color'");
 	}
 
 	if (config->active) {

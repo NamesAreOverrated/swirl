@@ -465,7 +465,7 @@ static void arrange_container(struct sway_container *con, int width, int height,
     int border_left = con->current.border_left ? border_width : 0;
 
     if (con->border.vfx) {
-      int shadow_ext = config->shadow_enabled ? config->shadow_offset : 0;
+      int shadow_ext = config->shadow_enabled ? config->shadow_blur_radius * 3 : 0;
       wlr_scene_node_set_position(&con->border.vfx->node, -shadow_ext, -shadow_ext);
       wlr_scene_vfx_set_size(con->border.vfx, width + shadow_ext * 2, height + shadow_ext * 2);
 

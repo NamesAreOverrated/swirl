@@ -307,7 +307,6 @@ static void config_defaults(struct sway_config *config) {
 	config->corner_radius = 0;
 	config->shadow_enabled = false;
 	config->shadow_blur_radius = 6;
-	config->shadow_offset = 18;
 	config->shadow_opacity = 0.5f;
 	config->shadow_color[0] = 0.0f;
 	config->shadow_color[1] = 0.0f;
