@@ -960,27 +960,12 @@ void container_set_floating(struct sway_container *container, bool enable) {
 			container_reap_empty(old_parent);
 		}
 	} else {
-		// Returning to tiled
+		// Returning to tiled — always creates a new column
 		if (container->scratchpad) {
 			root_scratchpad_remove_container(container);
 		}
 		container_detach(container);
-		struct sway_container *reference =
-			seat_get_focus_inactive_tiling(seat, workspace);
-		if (reference) {
-			if (reference->view) {
-				container_add_sibling(reference, container, 1);
-			} else {
-				container_add_child(reference, container);
-			}
-			container->pending.width = reference->pending.width;
-			container->pending.height = reference->pending.height;
-		} else {
-			struct sway_container *other =
-				workspace_add_tiling(workspace, container);
-			other->pending.width = workspace->width;
-			other->pending.height = workspace->height;
-		}
+		workspace_add_tiling(workspace, container);
 		if (container->view) {
 			view_set_tiled(container->view, true);
 			if (container->view->using_csd) {
@@ -992,8 +977,6 @@ void container_set_floating(struct sway_container *container, bool enable) {
 				}
 			}
 		}
-		container->width_fraction = 0;
-		container->height_fraction = 0;
 	}
 
 	container_end_mouse_operation(container);
