@@ -190,6 +190,20 @@ static struct sway_node *node_get_in_direction_tiling(
 		if (can_move) {
 			if (desired < 0 || desired >= siblings->length) {
 				int len = siblings->length;
+
+				// Column children: wrap within column, never fall through
+				if (parent_layout == L_VERT || parent_layout == L_TABBED
+						|| parent_layout == L_STACKED) {
+					if (config->focus_wrapping != WRAP_NO && len > 1) {
+						int wrap_idx = desired < 0 ? len - 1 : 0;
+						struct sway_container *wrap = siblings->items[wrap_idx];
+						struct sway_container *c = seat_get_focus_inactive_view(
+								seat, &wrap->node);
+						return &c->node;
+					}
+					return NULL;
+				}
+
 				if (config->focus_wrapping != WRAP_NO && !wrap_candidate
 						&& len > 1) {
 					if (desired < 0) {
