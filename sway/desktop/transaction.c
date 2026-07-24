@@ -246,7 +246,13 @@ static void apply_container_state(struct sway_container *container,
 
   memcpy(&container->current, state, sizeof(struct sway_container_state));
 
-  if (container->scene_tree && !container->node.destroying &&
+  bool is_tab_stack_child = false;
+  struct sway_container *p = container->pending.parent;
+  if (p && (p->pending.layout == L_TABBED || p->pending.layout == L_STACKED)) {
+    is_tab_stack_child = true;
+  }
+
+  if (!is_tab_stack_child && container->scene_tree && !container->node.destroying &&
       (old.x != container->current.x || old.y != container->current.y)) {
     double dist = fabs(container->current.x - old.x) +
       fabs(container->current.y - old.y);
