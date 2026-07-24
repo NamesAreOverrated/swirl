@@ -571,3 +571,44 @@ animations where `anim->to` is a visual struct that was never initialized
 (zeroed from calloc). For position animations, this would reset the visual
 state to all zeros (scale=0, opacity=0). This function is not currently used
 by any caller.
+
+### 10. `quad.frag` has no VFX-free fallback path
+
+`wlr_render_pass_add_rect()` serves both plain `wlr_scene_rect` nodes and VFX
+border/shadow nodes via the same `quad.frag` shader. The VFX uniforms (border
+thickness, shadow, box) are only populated in the VFX branch of
+`render_pass_add_rect()` — the `else` branch was setting `u_box` to
+`(0,0,0,0)`, making `corner_alpha()` always return 0. Combined with the
+blend-mode override (`color->a == 1.0` → `NONE`), non-VFX rects produced
+transparent black instead of the requested color.
+
+**Fix:** Added an `else` branch that sets `u_box` to the actual rect and
+resets all VFX uniforms to 0. Replaced the blend-mode override with
+`options->blend_mode` directly (callers already provide the correct mode).
+`quad.frag` now early-returns after the VFX border path and uses a
+`color * corner_alpha` fallback for plain rects.
+
+### 11. VFX node position/size must extend into parent-managed title bar area
+
+When a tabbed or stacked parent manages title bars, each child's VFX node
+(border/shadow) must extend upward into the title bar area so corners and
+shadows cover the title bar background. The child's scene tree is offset below
+the title bars, but the VFX node needs to know how much space to extend into.
+
+**Fix:** In `arrange_container`, when `title_bar` is false (parent-managed),
+compute `title_ext` from the parent's layout:
+`container_titlebar_height()` for tabbed, `N * container_titlebar_height()`
+for stacked. The VFX node's position is shifted up by `title_ext` and its
+height is increased by `title_ext`. `hide_lone_tab` is handled transparently
+because it sets `title_bar = true` (self-managed), which skips the extension
+entirely.
+
+### 12. `container_titlebar_height()` returns fixed value, not hide_lone_tab-adjusted
+
+`container_titlebar_height()` always returns the standard title bar height
+regardless of `hide_lone_tab`. When computing VFX title extension from the
+parent, using this value for a hide_lone_tab scenario would extend into
+non-existent space. This is avoided by keying off the `title_bar` bool —
+hide_lone_tab sets `title_bar_height = 0`, which makes
+`title_bar_height == 0` evaluate to `true`, meaning the container is
+self-managed and no extension is applied.

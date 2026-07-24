@@ -471,9 +471,21 @@ static void arrange_container(struct sway_container *con, int width, int height,
     int border_left = con->current.border_left ? border_width : 0;
 
     if (con->border.vfx) {
+
+      int title_ext = 0;
+      if (!title_bar && con->current.border != B_NORMAL) {
+        struct sway_container *p = con->current.parent;
+        if (p && p->current.layout == L_STACKED) {
+          title_ext = container_titlebar_height() * p->current.children->length;
+        } else {
+          title_ext = container_titlebar_height();
+        }
+      }
       int shadow_ext = config->shadow_enabled ? config->shadow_blur_radius * 3 : 0;
-      wlr_scene_node_set_position(&con->border.vfx->node, -shadow_ext, -shadow_ext);
-      wlr_scene_vfx_set_size(con->border.vfx, width + shadow_ext * 2, height + shadow_ext * 2);
+      wlr_scene_node_set_position(&con->border.vfx->node, -shadow_ext,
+                                  -shadow_ext - title_ext);
+      wlr_scene_vfx_set_size(con->border.vfx, width + shadow_ext * 2,
+                             height + title_ext + shadow_ext * 2);
 
       struct wlr_scene_node_vfx vfx = {0};
       if (con->border.vfx->node.vfx != NULL) {
