@@ -24,11 +24,11 @@ static bool get_direction_from_next_prev(struct sway_container *container,
 	if (strcasecmp(name, "prev") == 0) {
 		switch (parent_layout) {
 		case L_HORIZ:
-		case L_TABBED:
 			*out = WLR_DIRECTION_LEFT;
 			break;
 		case L_VERT:
 		case L_STACKED:
+		case L_TABBED:
 			*out = WLR_DIRECTION_UP;
 			break;
 		case L_NONE:
@@ -39,11 +39,11 @@ static bool get_direction_from_next_prev(struct sway_container *container,
 	} else if (strcasecmp(name, "next") == 0) {
 		switch (parent_layout) {
 		case L_HORIZ:
-		case L_TABBED:
 			*out = WLR_DIRECTION_RIGHT;
 			break;
 		case L_VERT:
 		case L_STACKED:
+		case L_TABBED:
 			*out = WLR_DIRECTION_DOWN;
 			break;
 		case L_NONE:
@@ -163,14 +163,27 @@ static struct sway_node *node_get_in_direction_tiling(
 		list_t *siblings = container_get_siblings(current);
 
 		if (dir == WLR_DIRECTION_LEFT || dir == WLR_DIRECTION_RIGHT) {
-			if (parent_layout == L_HORIZ || parent_layout == L_TABBED) {
+			if (parent_layout == L_HORIZ) {
 				can_move = true;
 				desired = idx + (dir == WLR_DIRECTION_LEFT ? -1 : 1);
 			}
 		} else {
-			if (parent_layout == L_VERT || parent_layout == L_STACKED) {
+			if (parent_layout == L_VERT || parent_layout == L_STACKED
+					|| parent_layout == L_TABBED) {
 				can_move = true;
 				desired = idx + (dir == WLR_DIRECTION_UP ? -1 : 1);
+			}
+		}
+
+		// Top-level column: allow between-column movement in any direction
+		if (!can_move && !current->pending.parent
+				&& current->pending.workspace) {
+			siblings = current->pending.workspace->tiling;
+			idx = list_find(siblings, current);
+			if (idx >= 0) {
+				can_move = true;
+				desired = idx + (dir == WLR_DIRECTION_LEFT
+					|| dir == WLR_DIRECTION_UP ? -1 : 1);
 			}
 		}
 

@@ -170,6 +170,11 @@ struct cmd_results *cmd_layout(int argc, char **argv) {
 	}
 	if (new_layout != old_layout) {
 		if (container) {
+			// Columns (top-level tiling containers) reject L_HORIZ
+			if (new_layout == L_HORIZ && !container->pending.parent
+					&& container->pending.workspace) {
+				return cmd_results_new(CMD_SUCCESS, NULL);
+			}
 			if (old_layout != L_TABBED && old_layout != L_STACKED) {
 				container->prev_split_layout = old_layout;
 			}

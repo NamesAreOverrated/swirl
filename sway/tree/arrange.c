@@ -344,7 +344,11 @@ void arrange_workspace(struct sway_workspace *workspace) {
 
 			struct sway_container *focused_win =
 				seat_get_focus_inactive_view(seat, &focus->node);
-			column_scroll_vert_to(focus, focused_win, box.height);
+			if (focus->pending.layout == L_VERT) {
+				column_scroll_vert_to(focus, focused_win, box.height);
+			} else {
+				focus->pending.scroll_y = 0;
+			}
 		} else {
 			workspace->viewport_x = 0;
 			workspace->viewport_y = 0;

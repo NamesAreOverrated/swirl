@@ -10,25 +10,6 @@
 #include "log.h"
 
 static struct cmd_results *do_split(int layout) {
-	struct sway_container *con = config->handler_context.container;
-	struct sway_workspace *ws = config->handler_context.workspace;
-	if (con) {
-		if (container_is_scratchpad_hidden_or_child(con) &&
-				con->pending.fullscreen_mode != FULLSCREEN_GLOBAL) {
-			return cmd_results_new(CMD_FAILURE,
-					"Cannot split a hidden scratchpad container");
-		}
-		container_split(con, layout);
-	} else {
-		workspace_split(ws, layout);
-	}
-
-	if (root->fullscreen_global) {
-		arrange_root();
-	} else {
-		arrange_workspace(ws);
-	}
-
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
 

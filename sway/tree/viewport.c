@@ -9,6 +9,7 @@
 #include "sway/input/seat.h"
 #include "sway/output.h"
 #include <wlr/types/wlr_scene_animation.h>
+#include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"
 #include "sway/tree/view.h"
@@ -84,7 +85,11 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 		node_set_dirty(&col->node);
 
 		if (!col->view && col->pending.children) {
-			viewport_arrange_windows(col);
+			if (col->pending.layout == L_VERT) {
+				viewport_arrange_windows(col);
+			} else {
+				arrange_container(col);
+			}
 		}
 
 		x += col->pending.width + gaps;
@@ -255,7 +260,11 @@ void handle_focus_viewport(struct sway_seat *seat,
 	ws->viewport_y = 0;
 
 	// Vertical — edge-snap focused window into column viewport
-	column_scroll_vert_to(col, col != container ? container : NULL, area_h);
+	if (col->pending.layout == L_VERT) {
+		column_scroll_vert_to(col, col != container ? container : NULL, area_h);
+	} else {
+		col->pending.scroll_y = 0;
+	}
 
 	node_set_dirty(&ws->node);
 	node_set_dirty(&col->node);
