@@ -572,6 +572,8 @@ struct sway_config {
 	int shadow_blur_radius;
 	float shadow_opacity;
 	float shadow_color[4];
+	float opacity;
+	float opacity_focused;
 	float default_column_width_fraction;
 	float min_column_width_fraction;
 	enum edge_border_types hide_edge_borders;

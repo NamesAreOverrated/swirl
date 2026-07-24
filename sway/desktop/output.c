@@ -219,6 +219,12 @@ void output_configure_scene(struct sway_output *output,
 		scene_descriptor_try_get(node, SWAY_SCENE_DESC_CONTAINER);
 	if (con) {
 		opacity = con->alpha;
+		if (con->view) {
+			float config_opacity = input_manager_has_focus(&con->node)
+				&& config->opacity_focused >= 0.0f
+				? config->opacity_focused : config->opacity;
+			opacity *= config_opacity;
+		}
 	}
 
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
