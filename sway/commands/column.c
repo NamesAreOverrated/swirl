@@ -136,6 +136,9 @@ struct cmd_results *cmd_pop(int argc, char **argv) {
 
 	list_del(ws->tiling, idx);
 	int focus_idx = viewport_grow_evenly(ws, idx, col_w);
+	if (focus_idx < 0 && ws->tiling->length > 0) {
+		focus_idx = idx < ws->tiling->length ? idx : ws->tiling->length - 1;
+	}
 	int insert_at = viewport_first_off_screen(ws, true);
 	if (insert_at < 0) insert_at = ws->tiling->length;
 	if (insert_at > ws->tiling->length) insert_at = ws->tiling->length;
