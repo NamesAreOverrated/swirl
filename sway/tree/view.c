@@ -897,6 +897,13 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 		view_set_tiled(view, true);
 	}
 
+	sway_log(SWAY_DEBUG, "view_map: type=%s app_id='%s' title='%s' "
+		"border=%d csd=%d floating=%d",
+		view->type == SWAY_VIEW_XDG_SHELL ? "xdg_shell" : "xwayland",
+		view_get_app_id(view), view_get_title(view),
+		view->container->pending.border, view->using_csd,
+		container_is_floating(view->container));
+
 	if (config->popup_during_fullscreen == POPUP_LEAVE &&
 			container->pending.workspace &&
 			container->pending.workspace->fullscreen &&

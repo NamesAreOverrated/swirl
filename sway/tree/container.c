@@ -66,6 +66,16 @@ struct sway_container *container_create(struct sway_view *view) {
 	bool failed = false;
 	c->scene_tree = alloc_scene_tree(root->staging, &failed);
 
+	c->border.tree = alloc_scene_tree(c->scene_tree, &failed);
+	c->content_tree = alloc_scene_tree(c->border.tree, &failed);
+
+	if (view) {
+		c->border.vfx = wlr_scene_vfx_create(c->border.tree, 0, 0);
+		if (!c->border.vfx) {
+			failed = true;
+		}
+	}
+
 	c->title_bar.tree = alloc_scene_tree(c->scene_tree, &failed);
 	c->title_bar.border = alloc_scene_tree(c->title_bar.tree, &failed);
 	c->title_bar.background = alloc_scene_tree(c->title_bar.tree, &failed);
@@ -76,16 +86,6 @@ struct sway_container *container_create(struct sway_view *view) {
 
 	for (int i = 0; i < 5; i++) {
 		alloc_rect_node(c->title_bar.background, &failed);
-	}
-
-	c->border.tree = alloc_scene_tree(c->scene_tree, &failed);
-	c->content_tree = alloc_scene_tree(c->border.tree, &failed);
-
-	if (view) {
-		c->border.vfx = wlr_scene_vfx_create(c->border.tree, 0, 0);
-		if (!c->border.vfx) {
-			failed = true;
-		}
 	}
 
 	if (!failed && !scene_descriptor_assign(&c->scene_tree->node,
