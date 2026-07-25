@@ -15,6 +15,8 @@
 #include "sway/tree/view.h"
 #include "sway/tree/viewport.h"
 #include "sway/tree/workspace.h"
+#include "sway/commands.h"
+#include "sway/tree/column.h"
 
 static bool fully_visible(double x, double w, double vp, double vpl) {
 	return x >= vp && x + w <= vp + vpl;
@@ -546,11 +548,104 @@ int viewport_grow_evenly(struct sway_workspace *ws, int col_idx,
 	return ve;
 }
 
-int viewport_first_off_screen(struct sway_workspace *ws, bool right) {
-	int vs, ve;
-	viewport_visible_range(ws, &vs, &ve);
-	if (vs < 0) {
-		return right ? ws->tiling->length : 0;
+struct cmd_results *cmd_evenh(int argc, char **argv) {
+	struct sway_container *con = config->handler_context.container;
+	if (!con) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
 	}
-	return right ? ve + 1 : vs - 1;
+	con = container_toplevel_ancestor(con);
+	struct sway_workspace *ws = con->pending.workspace;
+	if (!ws || ws->tiling->length == 0) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	double vp = ws->viewport_x;
+	double vp_end = vp + ws->width;
+
+	int *visible = malloc(ws->tiling->length * sizeof(int));
+	if (!visible) {
+		return cmd_results_new(CMD_FAILURE, "allocation failed");
+	}
+	int n = 0;
+	for (int i = 0; i < ws->tiling->length; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		if (c->pending.x + c->pending.width > vp - 0.5 &&
+				c->pending.x < vp_end + 0.5) {
+			visible[n++] = i;
+		}
+	}
+
+	if (n < 2) {
+		free(visible);
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	int gaps = ws->gaps_inner;
+	double usable = ws->width - (n - 1) * gaps;
+	double new_w = usable / n;
+
+	for (int i = 0; i < n; ++i) {
+		struct sway_container *c = ws->tiling->items[visible[i]];
+		column_set_width_px(c, new_w);
+		node_set_dirty(&c->node);
+	}
+	free(visible);
+
+	arrange_workspace(ws);
+	transaction_commit_dirty();
+	return cmd_results_new(CMD_SUCCESS, NULL);
+}
+
+struct cmd_results *cmd_evenv(int argc, char **argv) {
+	struct sway_container *con = config->handler_context.container;
+	if (!con) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	con = container_toplevel_ancestor(con);
+	if (con->pending.layout != L_VERT || !con->pending.children ||
+			con->pending.children->length < 2) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	struct sway_workspace *ws = con->pending.workspace;
+	if (!ws) {
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	int gaps = ws->gaps_inner;
+	double scroll_y = con->pending.scroll_y;
+	double vp_end = scroll_y + con->pending.height;
+
+	int *visible = malloc(con->pending.children->length * sizeof(int));
+	if (!visible) {
+		return cmd_results_new(CMD_FAILURE, "allocation failed");
+	}
+	int n = 0;
+	for (int i = 0; i < con->pending.children->length; ++i) {
+		struct sway_container *child = con->pending.children->items[i];
+		if (child->pending.y + child->pending.height > scroll_y &&
+				child->pending.y < vp_end) {
+			visible[n++] = i;
+		}
+	}
+
+	if (n < 2) {
+		free(visible);
+		return cmd_results_new(CMD_SUCCESS, NULL);
+	}
+
+	double usable = con->pending.height - (n - 1) * gaps;
+	double new_h = usable / n;
+
+	for (int i = 0; i < n; ++i) {
+		struct sway_container *child = con->pending.children->items[visible[i]];
+		window_set_height_px(child, new_h);
+		node_set_dirty(&child->node);
+	}
+	free(visible);
+
+	arrange_workspace(ws);
+	transaction_commit_dirty();
+	return cmd_results_new(CMD_SUCCESS, NULL);
 }

@@ -213,6 +213,8 @@ sway_cmd cmd_workspace_layout;
 sway_cmd cmd_release;
 sway_cmd cmd_take;
 sway_cmd cmd_pop;
+sway_cmd cmd_evenh;
+sway_cmd cmd_evenv;
 sway_cmd cmd_ws_auto_back_and_forth;
 sway_cmd cmd_xwayland;
 

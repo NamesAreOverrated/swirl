@@ -138,9 +138,20 @@ struct cmd_results *cmd_pop(int argc, char **argv) {
 	int focus_idx = viewport_grow_evenly(ws, idx, col_w);
 	if (focus_idx < 0 && ws->tiling->length > 0) {
 		focus_idx = idx < ws->tiling->length ? idx : ws->tiling->length - 1;
+		double remaining = ws->width;
+		for (int i = focus_idx; i < ws->tiling->length && remaining > 0; ++i) {
+			struct sway_container *c = ws->tiling->items[i];
+			double w = c->pending.width;
+			if (w > remaining) {
+				c->pending.width = remaining;
+				c->width_fraction = remaining / ws->width;
+				node_set_dirty(&c->node);
+				break;
+			}
+			remaining -= w + gaps;
+		}
 	}
-	int insert_at = viewport_first_off_screen(ws, true);
-	if (insert_at < 0) insert_at = ws->tiling->length;
+	int insert_at = focus_idx + 1;
 	if (insert_at > ws->tiling->length) insert_at = ws->tiling->length;
 	list_insert(ws->tiling, insert_at, con);
 

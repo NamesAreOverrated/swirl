@@ -5,6 +5,7 @@ struct sway_workspace;
 struct sway_container;
 struct sway_seat;
 struct wlr_box;
+struct cmd_results;
 
 void workspace_arrange_columns(struct sway_workspace *ws,
 		struct wlr_box *parent);
@@ -36,6 +37,8 @@ int viewport_grow_evenly(struct sway_workspace *ws, int col_idx,
 		double freed_width);
 
 void viewport_visible_range(struct sway_workspace *ws, int *start, int *end);
-int viewport_first_off_screen(struct sway_workspace *ws, bool right);
+
+struct cmd_results *cmd_evenh(int argc, char **argv);
+struct cmd_results *cmd_evenv(int argc, char **argv);
 
 #endif
