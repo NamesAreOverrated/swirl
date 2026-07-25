@@ -879,30 +879,22 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 
 	struct sway_container *container = view->container;
 	if (ws) {
-		container = workspace_add_tiling(ws, container);
+		if (view->impl->wants_floating && view->impl->wants_floating(view)) {
+			view->container->pending.border = config->floating_border;
+			view->container->pending.border_thickness = config->floating_border_thickness;
+			container_set_floating(view->container, true);
+		} else {
+			view->container->pending.border = config->border;
+			view->container->pending.border_thickness = config->border_thickness;
+			view_set_tiled(view, true);
+			container = workspace_add_tiling(ws, container);
+		}
 	}
 	ipc_event_window(view->container, "new");
 
 	if (decoration) {
 		view_update_csd_from_client(view, decoration);
 	}
-
-	if (view->impl->wants_floating && view->impl->wants_floating(view)) {
-		view->container->pending.border = config->floating_border;
-		view->container->pending.border_thickness = config->floating_border_thickness;
-		container_set_floating(view->container, true);
-	} else {
-		view->container->pending.border = config->border;
-		view->container->pending.border_thickness = config->border_thickness;
-		view_set_tiled(view, true);
-	}
-
-	sway_log(SWAY_DEBUG, "view_map: type=%s app_id='%s' title='%s' "
-		"border=%d csd=%d floating=%d",
-		view->type == SWAY_VIEW_XDG_SHELL ? "xdg_shell" : "xwayland",
-		view_get_app_id(view), view_get_title(view),
-		view->container->pending.border, view->using_csd,
-		container_is_floating(view->container));
 
 	if (config->popup_during_fullscreen == POPUP_LEAVE &&
 			container->pending.workspace &&

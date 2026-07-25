@@ -481,11 +481,6 @@ static void arrange_container(struct sway_container *con, int width, int height,
           title_ext = container_titlebar_height();
         }
       }
-      sway_log(SWAY_DEBUG, "arrange_vfx: title_bar=%d border=%d "
-          "parent_layout=%d title_ext=%d",
-          title_bar, con->current.border,
-          con->current.parent ? (int)con->current.parent->current.layout : -1,
-          title_ext);
       int shadow_ext = config->shadow_enabled ? config->shadow_blur_radius * 3 : 0;
       wlr_scene_node_set_position(&con->border.vfx->node, -shadow_ext,
                                   -shadow_ext - title_ext);
