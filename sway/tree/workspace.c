@@ -1474,6 +1474,7 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 	if (ws_b != ws_a) workspace_update_representation(ws_b);
 	node_set_dirty(&a->node);
 	node_set_dirty(&b->node);
+	transaction_commit_dirty();
 }
 
 void workspace_fit_new_column(struct sway_workspace *ws,
@@ -1627,22 +1628,34 @@ int workspace_even_freed(struct sway_workspace *ws,
 	int start = column_idx < ws->tiling->length
 		? column_idx : ws->tiling->length - 1;
 	sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] fallback start=%d "
-		"column_idx=%d tiling_len=%d", start, column_idx, ws->tiling->length);
-	double remaining = ws->width;
+		"column_idx=%d tiling_len=%d freed_width=%.1f",
+		start, column_idx, ws->tiling->length, freed_width);
+	double remaining = freed_width;
 	int gaps = ws->gaps_inner;
-	for (int i = start; i < ws->tiling->length && remaining > 0; ++i) {
+	int i;
+	for (i = start; i < ws->tiling->length && remaining > 1; ++i) {
 		struct sway_container *c = ws->tiling->items[i];
 		sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed]   fallback[%d]: "
 			"w=%.1f remaining=%.1f -> %s",
 			i, c->pending.width, remaining,
-			c->pending.width > remaining ? "MODIFY+break" : "subtract");
+			c->pending.width > remaining ? "CLIP" : "subtract");
 		if (c->pending.width > remaining) {
 			c->pending.width = remaining;
-			c->width_fraction = remaining / ws->width;
+			c->width_fraction = workspace_width_to_fraction(ws, remaining);
 			node_set_dirty(&c->node);
-			break;
+			sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] "
+				"fallback clip at [%d] -> w=%.1f", i, c->pending.width);
+			return i;
 		}
 		remaining -= c->pending.width + gaps;
+	}
+	if (remaining > 1 && i > start) {
+		struct sway_container *last = ws->tiling->items[i - 1];
+		last->pending.width += remaining;
+		last->width_fraction = workspace_width_to_fraction(ws, last->pending.width);
+		node_set_dirty(&last->node);
+		sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] "
+			"fallback leftover -> [%d] w=%.1f", i - 1, last->pending.width);
 	}
 	sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] fallback done "
 		"start=%d", start);
