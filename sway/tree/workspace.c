@@ -1424,6 +1424,8 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 		ws_a->tiling->length, ws_b->tiling->length);
 	double wf_a = a->width_fraction;
 	double wf_b = b->width_fraction;
+	double pw_a = a->pending.width;
+	double pw_b = b->pending.width;
 	if (ws_a == ws_b) {
 		list_del(ws_a->tiling, idx_a);
 		sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] "
@@ -1445,6 +1447,8 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 		}
 		a->width_fraction = wf_b;
 		b->width_fraction = wf_a;
+		a->pending.width = pw_b;
+		b->pending.width = pw_a;
 		node_set_dirty(&ws_a->node);
 	} else {
 		container_detach(a);
@@ -1463,6 +1467,8 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 		b->pending.workspace = ws_a;
 		a->width_fraction = wf_b;
 		b->width_fraction = wf_a;
+		a->pending.width = pw_b;
+		b->pending.width = pw_a;
 		container_for_each_child(a, set_workspace, NULL);
 		container_for_each_child(b, set_workspace, NULL);
 		container_handle_fullscreen_reparent(a);
