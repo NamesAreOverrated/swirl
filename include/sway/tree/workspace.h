@@ -152,6 +152,10 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 void workspace_swap_columns(struct sway_container *a, struct sway_container *b);
 void workspace_fit_new_column(struct sway_workspace *ws,
 		struct sway_container *col, int idx);
+void workspace_pull_column(struct sway_workspace *ws,
+		struct sway_container *col, int insert_idx);
+int workspace_even_freed(struct sway_workspace *ws,
+		int column_idx, double freed_width);
 
 struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 		struct sway_container *view, struct sway_container *target,

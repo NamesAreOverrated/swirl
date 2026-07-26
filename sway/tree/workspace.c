@@ -1496,3 +1496,58 @@ void workspace_fit_new_column(struct sway_workspace *ws,
 	column_set_width_px(col, target_w);
 	sway_log(SWAY_DEBUG, "[fit-column] col width set to %.0f", target_w);
 }
+
+void workspace_pull_column(struct sway_workspace *ws,
+		struct sway_container *col, int insert_idx) {
+	struct sway_container *fs = NULL;
+	if (col->pending.fullscreen_mode != FULLSCREEN_NONE) {
+		fs = col;
+	} else if (col->pending.children) {
+		for (int i = 0; i < col->pending.children->length; i++) {
+			struct sway_container *child = col->pending.children->items[i];
+			if (child->pending.fullscreen_mode != FULLSCREEN_NONE) {
+				fs = child;
+				break;
+			}
+		}
+	}
+	if (fs) {
+		container_set_fullscreen(fs, FULLSCREEN_NONE);
+	}
+	if (ws->fullscreen) {
+		container_set_fullscreen(ws->fullscreen, FULLSCREEN_NONE);
+	}
+
+	struct sway_workspace *old_ws = col->pending.workspace;
+	workspace_fit_new_column(ws, col, insert_idx);
+	workspace_insert_column(ws, col, insert_idx);
+	arrange_workspace(ws);
+	if (old_ws && old_ws != ws)
+		arrange_workspace(old_ws);
+}
+
+int workspace_even_freed(struct sway_workspace *ws,
+		int column_idx, double freed_width) {
+	if (!ws || ws->tiling->length == 0 || freed_width <= 0) {
+		return -1;
+	}
+	int last_vis = viewport_grow_evenly(ws, column_idx, freed_width);
+	if (last_vis >= 0) {
+		return last_vis;
+	}
+	int start = column_idx < ws->tiling->length
+		? column_idx : ws->tiling->length - 1;
+	double remaining = ws->width;
+	int gaps = ws->gaps_inner;
+	for (int i = start; i < ws->tiling->length && remaining > 0; ++i) {
+		struct sway_container *c = ws->tiling->items[i];
+		if (c->pending.width > remaining) {
+			c->pending.width = remaining;
+			c->width_fraction = remaining / ws->width;
+			node_set_dirty(&c->node);
+			break;
+		}
+		remaining -= c->pending.width + gaps;
+	}
+	return start;
+}

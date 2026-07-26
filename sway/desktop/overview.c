@@ -287,12 +287,7 @@ static void overview_action_pull(struct overview_thumbnail *t) {
   if (focus_col != target_col) {
     int fi = list_find(active_ws->tiling, focus_col);
     if (fi >= 0) {
-      struct sway_workspace *old_ws = target_col->pending.workspace;
-      int idx = fi + 1;
-      workspace_fit_new_column(active_ws, target_col, idx);
-      workspace_insert_column(active_ws, target_col, idx);
-      arrange_workspace(active_ws);
-      if (old_ws && old_ws != active_ws) arrange_workspace(old_ws);
+      workspace_pull_column(active_ws, target_col, fi + 1);
     }
   }
   seat_set_focus_container(state.seat, t->con);

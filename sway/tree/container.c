@@ -936,6 +936,17 @@ void container_set_floating(struct sway_container *container, bool enable) {
 
 	if (enable) {
 		struct sway_container *old_parent = container->pending.parent;
+
+		double freed_width = 0;
+		int freed_idx = -1;
+		if (workspace && old_parent) {
+			freed_idx = list_find(workspace->tiling, old_parent);
+			if (freed_idx >= 0
+					&& old_parent->pending.children->length == 1) {
+				freed_width = old_parent->pending.width;
+			}
+		}
+
 		container_detach(container);
 		workspace_add_floating(workspace, container);
 		if (container->view) {
@@ -958,6 +969,9 @@ void container_set_floating(struct sway_container *container, bool enable) {
 				seat_set_raw_focus(seat, &container->node);
 			}
 			container_reap_empty(old_parent);
+		}
+		if (freed_width > 0 && freed_idx >= 0) {
+			workspace_even_freed(workspace, freed_idx, freed_width);
 		}
 	} else {
 		// Returning to tiled — always creates a new column
