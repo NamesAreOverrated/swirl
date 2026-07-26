@@ -1032,19 +1032,18 @@ void container_set_floating(struct sway_container *container, bool enable) {
         container->pending.y, container->pending.width,
         container->pending.height);
 
-    int idx = 0;
-
-    int gaps = workspace->gaps_inner;
+    int idx = workspace->tiling->length;
+    double rel_x = container->pending.x - workspace->x;
     for (int i = 0; i < workspace->tiling->length; i++) {
       struct sway_container *c = workspace->tiling->items[i];
-      if (container->pending.x < c->pending.x + c->pending.width + gaps) {
+      if (rel_x < c->pending.x) {
         idx = i;
         break;
       }
     }
 
     sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] idx=%d (x-pos) "
-        "tiling->length=%d gaps=%d", idx, workspace->tiling->length, gaps);
+        "rel_x=%.1f tiling->length=%d", idx, rel_x, workspace->tiling->length);
 
     container_detach(container);
     view_con = container;
