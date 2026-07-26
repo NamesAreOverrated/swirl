@@ -4,6 +4,7 @@
 #include "sway/output.h"
 #include <wlr/types/wlr_scene.h>
 #include <math.h>
+#include "log.h"
 
 double layout_get_default_width(struct sway_workspace *workspace) {
 	return config->default_column_width_fraction;
@@ -43,9 +44,16 @@ double workspace_clamp_column_width(struct sway_workspace *ws, double pixel_widt
 }
 
 void column_set_width_px(struct sway_container *col, double width_px) {
+	sway_log(SWAY_DEBUG, "[FLOAT | column_set_width_px] col=%p width_px=%.1f "
+		"old_w=%.1f old_frac=%.4f ws=%p ws->width=%d",
+		col, width_px, col->pending.width, col->width_fraction,
+		col->pending.workspace,
+		col->pending.workspace ? col->pending.workspace->width : -1);
 	col->pending.width = width_px;
 	struct sway_workspace *ws = col->pending.workspace;
-	if (ws) {
-		col->width_fraction = workspace_width_to_fraction(ws, width_px);
+	if (ws && ws->width > 0) {
+		col->width_fraction = width_px / ws->width;
+		sway_log(SWAY_DEBUG, "[FLOAT | column_set_width_px]   new_frac=%.4f",
+			col->width_fraction);
 	}
 }

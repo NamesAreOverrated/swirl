@@ -299,12 +299,14 @@ static void overview_action_swap(struct overview_thumbnail *t) {
   struct sway_container *target_col = container_toplevel_ancestor(t->con);
   if (focus_col != target_col) {
     workspace_swap_columns(focus_col, target_col);
+    seat_set_focus_raw(state.seat, &t->con->node);
     struct sway_workspace *ws_a = focus_col->pending.workspace;
     struct sway_workspace *ws_b = target_col->pending.workspace;
     arrange_workspace(ws_a);
     if (ws_b != ws_a) arrange_workspace(ws_b);
+  } else {
+    seat_set_focus_container(state.seat, t->con);
   }
-  seat_set_focus_container(state.seat, t->con);
 }
 
 bool overview_handle_key(xkb_keysym_t sym) {

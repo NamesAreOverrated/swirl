@@ -1129,15 +1129,31 @@ void seat_set_raw_focus(struct sway_seat *seat, struct sway_node *node) {
 
 static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *node,
 		bool skip_viewport) {
-	struct sway_node *last_focus = seat_get_focus(seat);
-	if (last_focus == node) {
-		return;
-	}
-
 	if (node == NULL) {
+		struct sway_node *last_focus = seat_get_focus(seat);
 		seat_send_unfocus(last_focus, seat);
 		sway_input_method_relay_set_focus(&seat->im_relay, NULL);
 		seat->has_focus = false;
+		return;
+	}
+
+	// Enforce invariant: focus must always be on a view, never on a
+	// container (column, split, tabbed, etc.) that merely holds children.
+	if (node->type == N_CONTAINER && !node->sway_container->view) {
+		struct sway_container *con = node->sway_container;
+		struct sway_container *view_con =
+			seat_get_focus_inactive_view(seat, &con->node);
+		if (view_con) {
+			node = &view_con->node;
+		} else if (con->pending.children &&
+				con->pending.children->length > 0) {
+			node = &((struct sway_container *)
+				con->pending.children->items[0])->node;
+		}
+	}
+
+	struct sway_node *last_focus = seat_get_focus(seat);
+	if (last_focus == node) {
 		return;
 	}
 

@@ -131,18 +131,38 @@ struct cmd_results *cmd_pop(int argc, char **argv) {
 	double col_w = con->pending.width;
 	int gaps = ws->gaps_inner;
 
-	sway_log(SWAY_DEBUG, "[pop] con=%p idx=%d col_w=%.1f gaps=%d n=%d",
-		(void *)con, idx, col_w, gaps, ws->tiling->length);
+	sway_log(SWAY_DEBUG, "[FLOAT | cmd_pop] con=%p ws=%p idx=%d col_w=%.1f "
+		"gaps=%d tiling_len=%d focused_col_idx=%d viewport_x=%.1f",
+		(void *)con, ws, idx, col_w, gaps, ws->tiling->length,
+		ws->focused_column_idx, ws->viewport_x);
+	for (int i = 0; i < ws->tiling->length; i++) {
+		struct sway_container *c = ws->tiling->items[i];
+		sway_log(SWAY_DEBUG, "[FLOAT | cmd_pop]   before[%d]: %p x=%.1f w=%.1f",
+			i, c, c->pending.x, c->pending.width);
+	}
 
 	list_del(ws->tiling, idx);
+	sway_log(SWAY_DEBUG, "[FLOAT | cmd_pop] after list_del tiling_len=%d",
+		ws->tiling->length);
+	for (int i = 0; i < ws->tiling->length; i++) {
+		struct sway_container *c = ws->tiling->items[i];
+		sway_log(SWAY_DEBUG, "[FLOAT | cmd_pop]   after_del[%d]: %p x=%.1f w=%.1f",
+			i, c, c->pending.x, c->pending.width);
+	}
 	int focus_idx = workspace_even_freed(ws, idx, col_w);
 	int insert_at = focus_idx + 1;
 	if (insert_at > ws->tiling->length) insert_at = ws->tiling->length;
+	sway_log(SWAY_DEBUG, "[FLOAT | cmd_pop] focus_idx=%d insert_at=%d "
+		"tiling_len=%d", focus_idx, insert_at, ws->tiling->length);
 	list_insert(ws->tiling, insert_at, con);
 
-	sway_log(SWAY_DEBUG, "[pop] after: focus_idx=%d n=%d con_idx=%d",
-		focus_idx, ws->tiling->length,
-		list_find(ws->tiling, con));
+	sway_log(SWAY_DEBUG, "[FLOAT | cmd_pop] after insert: tiling_len=%d "
+		"con_at=%d", ws->tiling->length, list_find(ws->tiling, con));
+	for (int i = 0; i < ws->tiling->length; i++) {
+		struct sway_container *c = ws->tiling->items[i];
+		sway_log(SWAY_DEBUG, "[FLOAT | cmd_pop]   final[%d]: %p x=%.1f w=%.1f",
+			i, c, c->pending.x, c->pending.width);
+	}
 
 	if (focus_idx >= 0 && focus_idx < ws->tiling->length) {
 		struct sway_seat *seat = input_manager_current_seat();

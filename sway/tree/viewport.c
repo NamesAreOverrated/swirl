@@ -276,6 +276,44 @@ void handle_focus_viewport(struct sway_seat *seat,
 int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 		int exclude_idx, bool exclude_occupied, int *candidates,
 		int max_cand, double *out_occupied) {
+	sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible] ws=%p focus_idx=%d "
+		"exclude_idx=%d exclude_occupied=%d tiling_len=%d vp_x=%.1f "
+		"ws->width=%d", ws, focus_idx, exclude_idx, exclude_occupied,
+		ws->tiling->length, ws->viewport_x, ws->width);
+
+	for (int i = 0; i < ws->tiling->length; i++) {
+		struct sway_container *c = ws->tiling->items[i];
+		double x_end = c->pending.x + c->pending.width;
+		double vp_end = ws->viewport_x + ws->width;
+		bool vis = c->pending.x >= ws->viewport_x - 0.5
+			&& x_end <= vp_end + 0.5;
+		sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   col[%d]: %p "
+			"x=%.1f w=%.1f x_end=%.1f vp_end=%.1f vis=%d",
+			i, c, c->pending.x, c->pending.width, x_end, vp_end, vis);
+	}
+
+	if (!viewport_column_is_visible(ws, focus_idx)) {
+		int orig = focus_idx;
+		for (int i = focus_idx - 1; i >= 0; --i) {
+			if (viewport_column_is_visible(ws, i)) {
+				focus_idx = i;
+				break;
+			}
+		}
+		if (focus_idx == orig) {
+			for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
+				if (viewport_column_is_visible(ws, i)) {
+					focus_idx = i;
+					break;
+				}
+			}
+		}
+		if (focus_idx != orig) {
+			sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible] "
+				"focus_idx %d off-screen, adjusted to %d", orig, focus_idx);
+		}
+	}
+
 	double sum = 0;
 	int n = 0;
 	int total_vis = 1;
@@ -283,31 +321,51 @@ int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 	struct sway_container *fc = ws->tiling->items[focus_idx];
 	if (exclude_occupied && focus_idx == exclude_idx) {
 		total_vis--;
+		sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   focus[%d] EXCLUDED",
+			focus_idx);
 	} else {
 		sum += fc->pending.width;
+		sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   focus[%d]: "
+			"w=%.1f added", focus_idx, fc->pending.width);
 	}
 
 	for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
-		if (!viewport_column_is_visible(ws, i)) break;
+		if (!viewport_column_is_visible(ws, i)) {
+			sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   right[%d]: "
+				"NOT visible, break", i);
+			break;
+		}
 		struct sway_container *c = ws->tiling->items[i];
 		if (exclude_occupied && i == exclude_idx) {
 			total_vis--;
+			sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   right[%d] "
+				"EXCLUDED", i);
 		} else {
 			total_vis++;
 			sum += c->pending.width;
+			sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   right[%d]: "
+				"w=%.1f added", i, c->pending.width);
 		}
 		if (i != exclude_idx && n < max_cand)
 			candidates[n++] = i;
 	}
 
 	for (int i = focus_idx - 1; i >= 0; --i) {
-		if (!viewport_column_is_visible(ws, i)) break;
+		if (!viewport_column_is_visible(ws, i)) {
+			sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   left[%d]: "
+				"NOT visible, break", i);
+			break;
+		}
 		struct sway_container *c = ws->tiling->items[i];
 		if (exclude_occupied && i == exclude_idx) {
 			total_vis--;
+			sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   left[%d] "
+				"EXCLUDED", i);
 		} else {
 			total_vis++;
 			sum += c->pending.width;
+			sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   left[%d]: "
+				"w=%.1f added", i, c->pending.width);
 		}
 		if (i != exclude_idx && n < max_cand)
 			candidates[n++] = i;
@@ -318,6 +376,9 @@ int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 	}
 
 	*out_occupied = sum + ws->gaps_inner * (total_vis - 1);
+	sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible] result: "
+		"occupied=%.1f (sum=%.1f + gaps*%d) n_vis=%d n_candidates=%d",
+		*out_occupied, sum, total_vis - 1, total_vis, n);
 	return n;
 }
 
@@ -374,19 +435,21 @@ void viewport_visible_range(struct sway_workspace *ws, int *start, int *end) {
 
 int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 		double freed_width) {
-	if (!ws || ws->tiling->length == 0 || freed_width <= 1) {
-		return -1;
-	}
+  if (!ws || ws->tiling->length == 0 || freed_width <= 1) {
+    return -1;
+  }
 
-	double remaining = freed_width;
-	double default_w = workspace_width_fraction(ws,
-			config->default_column_width_fraction);
-	double min_w = workspace_width_fraction(ws,
-			config->min_column_width_fraction);
+  freed_width = fmin(freed_width + ws->gaps_inner, ws->width);
 
-	int vs, ve;
-	viewport_visible_range(ws, &vs, &ve);
-	sway_log(SWAY_DEBUG, "[grow] col_idx=%d freed=%.1f vis=[%d,%d] n=%d "
+  double remaining = freed_width;
+  double default_w = workspace_width_fraction(ws,
+      config->default_column_width_fraction);
+  double min_w = workspace_width_fraction(ws,
+      config->min_column_width_fraction);
+
+  int vs, ve;
+  viewport_visible_range(ws, &vs, &ve);
+  sway_log(SWAY_DEBUG, "[grow] col_idx=%d freed=%.1f vis=[%d,%d] n=%d "
 		"default_w=%.1f min_w=%.1f",
 		col_idx, freed_width, vs, ve, ws->tiling->length, default_w, min_w);
 
@@ -527,24 +590,49 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 
 int viewport_grow_evenly(struct sway_workspace *ws, int col_idx,
 		double freed_width) {
-	if (!ws || ws->tiling->length == 0 || freed_width <= 1) return -1;
+	if (!ws || ws->tiling->length == 0 || freed_width <= 1) {
+		sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly] early return -1: "
+			"tiling_len=%d freed_width=%.1f",
+			ws ? ws->tiling->length : -1, freed_width);
+		return -1;
+	}
 
 	int vs, ve;
 	viewport_visible_range(ws, &vs, &ve);
-	if (vs < 0 || ve < vs) return -1;
+	if (vs < 0 || ve < vs) {
+		sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly] no visible range: "
+			"vs=%d ve=%d", vs, ve);
+		return -1;
+	}
 
 	int n_vis = ve - vs + 1;
 	double give = freed_width / n_vis;
 	double given = 0;
+
+	sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly] ws=%p col_idx=%d "
+		"freed_width=%.1f vs=%d ve=%d n_vis=%d give=%.2f",
+		ws, col_idx, freed_width, vs, ve, n_vis, give);
+
+	for (int i = 0; i < ws->tiling->length; i++) {
+		struct sway_container *c = ws->tiling->items[i];
+		sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly]   before[%d]: %p "
+			"x=%.1f w=%.1f", i, c, c->pending.x, c->pending.width);
+	}
+
 	for (int i = vs; i <= ve; ++i) {
 		struct sway_container *c = ws->tiling->items[i];
 		double add = (i == ve) ? (freed_width - given) : give;
-		c->pending.width = fmin(c->pending.width + add, ws->width);
-		c->width_fraction = workspace_width_to_fraction(ws, c->pending.width);
+		double new_w = fmin(c->pending.width + add, ws->width);
+		sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly]   col[%d]: "
+			"w=%.1f + %.1f = %.1f (capped at ws->width=%d)",
+			i, c->pending.width, add, new_w, ws->width);
+		c->pending.width = new_w;
+		c->width_fraction = workspace_width_to_fraction(ws, new_w);
 		node_set_dirty(&c->node);
 		given += add;
 	}
 
+	sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly] return ve=%d", ve);
 	return ve;
 }
 
