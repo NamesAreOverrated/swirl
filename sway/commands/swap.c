@@ -53,7 +53,7 @@ struct cmd_results *cmd_swap(int argc, char **argv) {
 				list_find(tc->pending.workspace->tiling, tc) >= 0 &&
 				fc != tc) {
 			workspace_swap_columns(fc, tc);
-			seat_set_focus_container(seat, target);
+			seat_set_focus_raw(seat, &target->node);
 		} else {
 			container_swap(focus, target);
 		}

@@ -2,6 +2,7 @@
 #include "sway/desktop/overview.h"
 #include "log.h"
 #include "sway/config.h"
+#include "sway/desktop/transaction.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
 #include "sway/scene_descriptor.h"
@@ -304,6 +305,7 @@ static void overview_action_swap(struct overview_thumbnail *t) {
     struct sway_workspace *ws_b = target_col->pending.workspace;
     arrange_workspace(ws_a);
     if (ws_b != ws_a) arrange_workspace(ws_b);
+    transaction_commit_dirty();
   } else {
     seat_set_focus_container(state.seat, t->con);
   }

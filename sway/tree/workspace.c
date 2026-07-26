@@ -1474,7 +1474,6 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 	if (ws_b != ws_a) workspace_update_representation(ws_b);
 	node_set_dirty(&a->node);
 	node_set_dirty(&b->node);
-	transaction_commit_dirty();
 }
 
 void workspace_fit_new_column(struct sway_workspace *ws,
