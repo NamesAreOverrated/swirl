@@ -317,10 +317,13 @@ static void handle_seat_node_destroy(struct wl_listener *listener, void *data) {
 		// Setting focus_inactive
 		focus = seat_get_focus_inactive(seat, &root->node);
 		seat_set_raw_focus(seat, next_focus);
-		if (focus->type == N_CONTAINER && focus->sway_container->pending.workspace) {
+		if (focus && focus->type == N_CONTAINER &&
+				focus->sway_container->pending.workspace) {
 			seat_set_raw_focus(seat, &focus->sway_container->pending.workspace->node);
 		}
-		seat_set_raw_focus(seat, focus);
+		if (focus) {
+			seat_set_raw_focus(seat, focus);
+		}
 	}
 }
 
@@ -1131,7 +1134,9 @@ static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *n
 		bool skip_viewport) {
 	if (node == NULL) {
 		struct sway_node *last_focus = seat_get_focus(seat);
-		seat_send_unfocus(last_focus, seat);
+		if (last_focus) {
+			seat_send_unfocus(last_focus, seat);
+		}
 		sway_input_method_relay_set_focus(&seat->im_relay, NULL);
 		seat->has_focus = false;
 		return;
@@ -1145,10 +1150,8 @@ static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *n
 			seat_get_focus_inactive_view(seat, &con->node);
 		if (view_con) {
 			node = &view_con->node;
-		} else if (con->pending.children &&
-				con->pending.children->length > 0) {
-			node = &((struct sway_container *)
-				con->pending.children->items[0])->node;
+		} else {
+			return;
 		}
 	}
 

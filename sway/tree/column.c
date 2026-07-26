@@ -14,14 +14,22 @@ int column_remove(struct sway_container *col, bool grow_neighbors) {
 	int idx = list_find(ws->tiling, col);
 	double col_w = col->pending.width;
 
+	sway_log(SWAY_DEBUG, "[FLOAT | column_remove] col=%p idx=%d "
+		"tiling_len=%d grow_neighbors=%d", col, idx,
+		ws->tiling->length, grow_neighbors);
+
 	container_reap_empty(col);
 
 	int focus_idx = -1;
 	if (idx >= 0 && grow_neighbors && ws->tiling->length > 0) {
 		double freed = col_w;
-		sway_log(SWAY_DEBUG, "[column_remove] idx=%d freed=%.0f grow=%d",
-			idx, freed, grow_neighbors);
+		sway_log(SWAY_DEBUG, "[FLOAT | column_remove] "
+			"viewport_grow_to_fill: idx=%d freed=%.0f tiling_len=%d",
+			idx, freed, ws->tiling->length);
 		focus_idx = viewport_grow_to_fill(ws, idx, freed);
 	}
+
+	sway_log(SWAY_DEBUG, "[FLOAT | column_remove] return focus_idx=%d "
+		"tiling_len=%d", focus_idx, ws->tiling->length);
 	return focus_idx;
 }

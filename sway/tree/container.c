@@ -506,6 +506,10 @@ void container_reap_empty(struct sway_container *con) {
     return;
   }
   struct sway_workspace *ws = con->pending.workspace;
+  sway_log(SWAY_DEBUG, "[FLOAT | container_reap_empty] con=%p "
+    "children=%d view=%d ws=%p", con,
+    con->pending.children ? con->pending.children->length : -1,
+    !!con->view, ws);
   while (con) {
     if (con->pending.children->length) {
       return;

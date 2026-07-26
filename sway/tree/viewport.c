@@ -529,7 +529,7 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 
 		if (slider_idx >= 0 && remaining >= min_w) {
 			double orig = ((struct sway_container *)ws->tiling->items[slider_idx])->pending.width;
-			double new_w = remaining;
+			double new_w = remaining - ws->gaps_inner;
 			if (new_w < min_w) new_w = min_w;
 			sway_log(SWAY_DEBUG, "[grow]   step3: slider[%d]: %.4f -> %.4f "
 				"(delta=%.4f)", slider_idx, orig, new_w, new_w - orig);
@@ -632,7 +632,8 @@ int viewport_grow_evenly(struct sway_workspace *ws, int col_idx,
 		given += add;
 	}
 
-	sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly] return ve=%d", ve);
+	sway_log(SWAY_DEBUG, "[FLOAT | viewport_grow_evenly] return ve=%d "
+		"tiling_len=%d", ve, ws->tiling->length);
 	return ve;
 }
 
