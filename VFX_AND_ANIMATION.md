@@ -181,7 +181,7 @@ struct wlr_scene_vfx {
 
 struct wlr_scene_vfx *wlr_scene_vfx_create(
     struct wlr_scene_tree *parent, int width, int height);
-void wlr_scene_vfx_set_size(struct wlr_scene_vfx *vfx, int w, int h);
+void wlr_scene_vfx_set_size(struct wlr_scene_vfx *vfx, int width, int height);
 ```
 
 ### Scene tree structure (per container)
@@ -209,7 +209,7 @@ The VFX node replaces the old approach of four individual border rects
 as an inset rounded stroke. Shadow is rendered as a Gaussian-blurred rounded
 rect behind the border.
 
-### Fragment shader (vfx.frag)
+### Fragment shader (quad.frag)
 
 The VFX shader receives uniforms for corner radius, border thickness/color, and
 shadow parameters. It computes:
@@ -218,6 +218,10 @@ shadow parameters. It computes:
 
 The center of the VFX node is transparent (zero alpha), allowing the view
 content (rendered behind it in the scene tree z-order) to show through.
+
+**Note:** VFX rendering is GLES2-only. The Vulkan renderer does not support
+corner_radius, border_thickness, or shadow uniforms. On Vulkan, VFX nodes
+will render as plain opaque rects regardless of VFX state.
 
 ### Opaque region
 
@@ -612,3 +616,113 @@ non-existent space. This is avoided by keying off the `title_bar` bool —
 hide_lone_tab sets `title_bar_height = 0`, which makes
 `title_bar_height == 0` evaluate to `true`, meaning the container is
 self-managed and no extension is applied.
+
+---
+
+## Vulkan Porting Guide
+
+The Vulkan renderer currently ignores all VFX fields and draws solid rects.
+This section documents what needs to change to add VFX support on Vulkan.
+
+### Data flow (already renderer-agnostic)
+
+The scene graph populates `wlr_render_rect_options` in `scene_entry_render()`
+and passes it to `wlr_render_pass_add_rect()`. Both the GLES2 and Vulkan
+backends receive the same struct — Vulkan just doesn't read the extra fields.
+
+```c
+// include/wlr/render/pass.h
+struct wlr_render_rect_options {
+    struct wlr_box box;
+    struct wlr_render_color color;
+    const pixman_region32_t *clip;
+    enum wlr_render_blend_mode blend_mode;
+
+    float corner_radius[4];        // tl, tr, br, bl — zero = square
+    float border_thickness[4];     // top, right, bottom, left — zero = filled
+    float shadow_blur_sigma;       // zero = no shadow
+    float shadow_opacity;          // 0.0–1.0, multiplied by shadow_color.a
+    struct wlr_render_color shadow_color; // premultiplied RGBA
+};
+```
+
+The `wlr_render_texture_options` struct has `float corner_radius[4]` too
+(for corner-clipped textures — no border/shadow needed).
+
+### What to change in the Vulkan renderer
+
+#### 1. Fragment shader — `render/vulkan/shaders/quad.frag`
+
+Rewrite from a flat-color passthrough to the same SDF-based logic as GLES2:
+
+```glsl
+#version 450
+layout(push_constant) uniform VfxData {
+    layout(offset = 48) vec4 color;
+    layout(offset = 64) vec4 corner_radius;
+    layout(offset = 80) vec4 border_thickness;
+    layout(offset = 96) vec4 shadow_params; // x=blur_sigma, y=opacity, w=ext
+    layout(offset = 112) vec4 shadow_color;
+    layout(offset = 128) vec4 box;          // x,y,w,h in buffer coords
+} vfx;
+
+// Same corner_sdf / corner_alpha / shadow + border layering as quad.frag
+// Use gl_FragCoord.xy - vfx.box.xy for SDF coordinate space
+```
+
+#### 2. Push constant structures — `include/render/vulkan.h`
+
+Currently the frag push constants start at offset 48 (after
+`wlr_vk_vert_pcr_data`'s 48 bytes) and hold one `vec4 color` (16 bytes,
+total 64). The VFX fields need 80 more bytes, pushing the total to 144 —
+over Vulkan's 128-byte minimum guarantee.
+
+**Options to stay in budget:**
+- Pack `corner_radius` into a single `vec4` (already is) — 16 bytes
+- Pack `border_thickness` into a single `vec4` — 16 bytes
+- Pack `shadow_params` into a `vec4` — 16 bytes
+- Pack `shadow_color` into a `vec4` — 16 bytes
+- Drop `box` and compute SDF coords from `gl_FragCoord.xy` minus a `uniform` passed via a descriptor set
+- Or use a **uniform buffer** (VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) for the VFX params instead of push constants
+
+A uniform buffer is cleaner — push constants are best for small, frequently
+changing data under 128 bytes.
+
+#### 3. `render_pass_add_rect` — `render/vulkan/pass.c`
+
+- Force `WLR_RENDER_BLEND_MODE_PREMULTIPLIED` when any `border_thickness` is
+  nonzero, matching the GLES2 fix for quirk #3
+- Expand the draw bounding box by `shadow_blur_sigma * 3` in all directions
+  (the shadow bleed region)
+- Pack the VFX data into the uniform buffer or push constants before dispatch
+
+#### 4. Texture corner-radius — `render_pass_add_texture` + `texture.frag`
+
+`wlr_render_texture_options.corner_radius` is also ignored. The texture
+pipeline's fragment shader needs the same SDF corner clip:
+
+```glsl
+float ca = corner_alpha(gl_FragCoord.xy - box.xy, box.zw, corner_radius);
+out_color *= ca;
+```
+
+No border or shadow needed for textures.
+
+### Renderer capability gate (alternative approach)
+
+Instead of implementing VFX in Vulkan, add a capability flag so the scene
+graph can skip VFX when the renderer doesn't support it:
+
+```c
+// include/wlr/render/wlr_renderer.h
+enum wlr_renderer_feature {
+    WLR_RENDERER_FEATURE_VFX,
+};
+
+bool wlr_renderer_has_feature(struct wlr_renderer *r,
+    enum wlr_renderer_feature feature);
+```
+
+GLES2 returns true, Vulkan returns false. `scene_entry_render` checks the
+flag and skips `wlr_render_pass_add_rect` for VFX nodes when unsupported.
+This is the minimal fix to avoid rendering garbage on Vulkan.
