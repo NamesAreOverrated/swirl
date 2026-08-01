@@ -1,8 +1,15 @@
 # VFX + Animation Architecture
 
 This document describes the actual implementation of border rendering, drop
-shadows, rounded corners, and scene-graph animation in the wlroots GLES2 shader
-pipeline, as of the current codebase.
+shadows, rounded corners, and scene-graph animation in the wlroots scene graph
+and the GLES2 renderer, as of the current codebase.
+
+VFX (corner radius, border, shadow) is modeled as a `wlr_scene_node_vfx` payload
+attached to a plain `wlr_scene_rect` or `wlr_scene_buffer` node via
+`node->vfx` — there is no dedicated VFX scene-node type anymore (the
+`WLR_SCENE_NODE_VFX` type from earlier versions was folded into rects/buffers).
+The GLES2 renderer draws it in a single SDF fragment pass; the Vulkan and pixman
+renderers do not support it yet (see "Capability gate").
 
 ## Design Philosophy
 
@@ -10,7 +17,7 @@ pipeline, as of the current codebase.
 
 | Concern | Nature | Owner | Lifetime |
 |---------|--------|-------|----------|
-| Rounded corners, borders, shadows | Static shader uniforms | `wlr_scene_node_vfx` (via `wlr_scene_node_set_vfx`) | Until explicitly changed |
+| Rounded corners, borders, shadows | Static per-node state | `wlr_scene_node_vfx` (via `wlr_scene_node_set_vfx`), a pointer on `wlr_scene_node` | Until explicitly changed |
 | Position, opacity, scale transitions | Temporal tween | `wlr_scene_node_visual` + animation timer | Until tween completes |
 
 VFX are **not** animations. A corner radius doesn't tween — it's a fixed property
@@ -22,14 +29,15 @@ Sway previously had its own animation timer (`sway_anim_sync`) and per-node
 state (`struct sway_anim`) in `sway/tree/animation.c`. That system was removed.
 The new design lives entirely in wlroots:
 
-1. **The renderer needs the data** — VFX uniforms and visual-size overrides are
+1. **The renderer needs the data** — VFX state and visual-size overrides are
    consumed by the render pass in `scene_entry_render`. Having the state in
    wlroots avoids cross-layer callbacks.
 
 2. **Zero-cost when idle** — `wlr_scene_node::visual` is NULL when no animation
    is active. The render pass checks `if (node->visual)` before accumulating
    offsets, scales, and opacity from ancestor nodes — the fast path runs
-   unchanged when no node in the subtree has a visual override.
+   unchanged when no node in the subtree has a visual override. The same holds
+   for `node->vfx`: it is NULL on the thousands of nodes that never use VFX.
 
 3. **No special cases in Sway** — Sway calls `wlr_scene_animate_position()` or
    `wlr_scene_animate()` and the animation "just works". No per-animation
@@ -103,7 +111,21 @@ struct wlr_scene_node_vfx {
 };
 ```
 
-Set via `wlr_scene_node_set_vfx(node, &vfx)`.
+Set via `wlr_scene_node_set_vfx(node, &vfx)`. The struct is stored behind the
+`node->vfx` pointer (`NULL` = no VFX), which lives on every `wlr_scene_node` —
+so **any** node type can carry VFX state, but only rect and buffer nodes
+consume it at render time.
+
+A VFX payload is considered **active** when `scene_node_vfx_active(node)`
+returns true:
+
+```c
+border.thickness[i] > 0 (any i)                  // border
+|| (shadow.blur_sigma > 0 && shadow.opacity > 0  // shadow
+    && shadow.color[3] > 0)
+```
+
+A payload with only `corner_radius` set is *not* "active" by this test.
 
 ### Animation types
 
@@ -168,21 +190,37 @@ struct wlr_scene_animator {
 
 ## VFX Rendering
 
-### VFX node type
+### VFX on scene nodes
 
-`WLR_SCENE_NODE_VFX` is a scene node that draws border decorations (outline,
-drop shadow, corner radius) in a single fragment shader pass.
+There is no dedicated VFX node type. A VFX rect is a plain `wlr_scene_rect`
+whose `node->vfx` pointer holds the border/shadow/radius state:
 
 ```c
-struct wlr_scene_vfx {
-    struct wlr_scene_node node;
-    int width, height;
-};
+struct wlr_scene_rect *rect = wlr_scene_rect_create(parent, 0, 0, transparent);
 
-struct wlr_scene_vfx *wlr_scene_vfx_create(
-    struct wlr_scene_tree *parent, int width, int height);
-void wlr_scene_vfx_set_size(struct wlr_scene_vfx *vfx, int width, int height);
+struct wlr_scene_node_vfx vfx = {0};
+vfx.border.thickness[0] = vfx.border.thickness[1] = 2; // top, right
+vfx.border.thickness[2] = vfx.border.thickness[3] = 2; // bottom, left
+memcpy(vfx.border.color, (float[]){ 0.5, 0.5, 0.5, 1.0 }, sizeof(vfx.border.color));
+vfx.shadow.blur_sigma = 10.0f;
+vfx.shadow.opacity = 0.8f;
+vfx.shadow.color[3] = 1.0f;
+wlr_scene_node_set_vfx(&rect->node, &vfx);
 ```
+
+The rect's **bounds include the shadow expansion**. Sway sizes the node to
+`width + 2*ext` by `height + 2*ext` and positions it at `-ext, -ext`, where
+`ext = wlr_scene_vfx_shadow_extension(blur_sigma) = blur_sigma * 3.0f`. The
+shader insets back by `ext` to find the container rect. This keeps the scene
+node's bounding box large enough for both damage tracking and the shadow bleed.
+
+Sway helpers that set VFX state live in `sway/tree/container.c`:
+- `container_set_border` — builds the `vfx` struct and calls
+  `wlr_scene_node_set_vfx` (container.c:292)
+- `container_set_geometry` — positions/sizes the rect around the container
+  (container.c:321-323)
+- `wlr_scene_rect_set_corner_radius` / `wlr_scene_buffer_set_corner_radius`
+  allocate `node->vfx` lazily when only rounding is needed (wlr_scene.c:826, 840)
 
 ### Scene tree structure (per container)
 
@@ -191,8 +229,9 @@ container->scene_tree
 ├── container->title_bar.tree
 │     └── background rects, text — managed by sway
 ├── container->border.tree
-│     ├── container->border.vfx      ← WLR_SCENE_NODE_VFX
-│     │     shader draws:
+│     ├── container->border.vfx      ← wlr_scene_rect carrying node->vfx
+│     │     bounds = container size + 2*ext (shadow expansion)
+│     │     shader draws (inset by ext):
 │     │       1. Drop shadow (behind, blurred rounded rect)
 │     │       2. Border (inset outline, corner-radius clipped)
 │     │       → rest of the box is transparent (content shows through)
@@ -204,30 +243,58 @@ container->scene_tree
 │                       └── xdg_surface tree (wlr_scene_buffer)
 ```
 
-The VFX node replaces the old approach of four individual border rects
+The VFX rect replaces the old approach of four individual border rects
 (`border.{top,bottom,left,right}`). The border is drawn by the fragment shader
 as an inset rounded stroke. Shadow is rendered as a Gaussian-blurred rounded
 rect behind the border.
 
 ### Fragment shader (quad.frag)
 
-The VFX shader receives uniforms for corner radius, border thickness/color, and
-shadow parameters. It computes:
-1. Shadow — expanded rounded rect with Gaussian blur convolution
-2. Border — outer rounded rect minus inner rounded rect, drawn at given thickness
+The GLES2 shader (`render/gles2/shaders/quad.frag`) receives a rect box,
+corner radius, border thickness, and shadow parameters. It computes:
 
-The center of the VFX node is transparent (zero alpha), allowing the view
+1. `corner_sdf()` — an SDF for a rounded rect, and `corner_alpha()` — its
+   `smoothstep(fwidth())` anti-aliased alpha.
+2. **Shadow** — `exp(-d²/2σ²)` Gaussian falloff of the rounded-rect SDF,
+   clipped out of the inner (border-inset) rect, multiplied by
+   `shadow.opacity * shadow_color.a`.
+3. **Border rim** — outer rounded rect minus inner rounded rect, drawn at the
+   per-edge thickness.
+4. **Plain fallback** — `color * corner_alpha` when no border and no shadow.
+
+The center of the VFX rect is transparent (zero alpha), allowing the view
 content (rendered behind it in the scene tree z-order) to show through.
 
-**Note:** VFX rendering is GLES2-only. The Vulkan renderer does not support
-corner_radius, border_thickness, or shadow uniforms. On Vulkan, VFX nodes
-will render as plain opaque rects regardless of VFX state.
+The border color, shadow color, and opacity are premultiplied; GLES2 passes
+them through in sRGB space and the framebuffer is treated as sRGB, so no
+conversion is done in the GLES2 shader.
+
+### Capability gate (renderer support)
+
+VFX support is gated by `renderer->features.vfx` (`include/wlr/render/wlr_renderer.h`).
+Only the GLES2 renderer sets it (`render/gles2/renderer.c`). On renderers where
+it is unset (Vulkan, pixman):
+
+- `scene_entry_render` **skips** rect/buffer nodes with an *active* VFX payload
+  entirely — nothing is drawn (no garbage, but no border/shadow either).
+- `corner_radius` on plain rects, single-pixel buffers, and textures is ignored
+  (the `node->vfx && features.vfx` guard in `scene_entry_render`).
+
+This is the documented fallback behavior today; the Vulkan Porting Guide below
+is the task list to close the gap.
 
 ### Opaque region
 
-A VFX node with active border or shadow reports zero opaque area — the rounded
-corners and inner cutout make the entire node potentially transparent. Nodes
-behind a VFX node should not be culled.
+`scene_node_opaque_region()` reports **zero opaque area** for any node with an
+active VFX payload (wlr_scene.c:269, 278). The rounded corners, inner cutout,
+and shadow make the whole node potentially transparent, so content behind it
+must not be culled.
+
+Note the corner-only case: a node with only `corner_radius` set is not "active"
+per `scene_node_vfx_active`, so a fully-opaque rect or buffer with rounding
+still reports its full bounds as opaque. Rounded corners at the edges of an
+opaque buffer can therefore be over-culled; the opaque-region conservative
+checks (alpha == 1, buffer_is_opaque) are the only mitigations today.
 
 ---
 
@@ -283,12 +350,15 @@ Opacity is multiplied into each entry type's color alpha:
 - VFX border: `border.color[3] * vis_alpha`
 - VFX shadow: `shadow.opacity * vis_alpha`
 
-The VFX node's position and size are also adjusted by visual state:
+The VFX rect's position and size are also adjusted by visual state
+(`scene_entry_render_vfx`, wlr_scene.c:1529):
 - `x_rel += vis_off_x` (offset from accumulated visual.x/y)
 - `vw *= vis_scale_x` (scale VFX width by accumulated scale)
 - `vh *= vis_scale_y`
 - `x_rel += (original_vw - vw) / 2` (center-shrink like dst_box)
 - Shadow opacity: `shadow.opacity * vis_alpha`
+- Border thickness and corner radius are scaled by the output scale and
+  rounded with `roundf()` to match the content's pixel grid (see Quirk 6).
 
 ---
 
@@ -438,33 +508,31 @@ animations.
 
 ## Pixman fallback
 
-The pixman renderer (software fallback) doesn't support custom fragment
-shaders. VFX features (rounded corners, borders, shadows) use pixman region
-operations:
+The pixman renderer (software fallback) does **not** support VFX. It never sets
+`features.vfx`, so the capability gate applies exactly as it does on Vulkan:
 
-| Feature | Pixman approach |
-|---------|----------------|
-| Corner radius | Render normally, then composite corner cutouts using `pixman_image_create_solid_fill()` + `pixman_image_composite32()` with a rounded mask |
-| Borders | Render the outer rect, then punch out the inner rect using pixman region subtract |
-| Shadow | Expand the rect by `blur_sigma`, render the shadow color with a pixman gaussian-blur convolution |
-| Visual scale | Uses `pixman_image_set_transform()` with bilinear scale (exists in pixman pass) |
-| Visual opacity | Already handled by the `mask` parameter in `pixman_image_composite32()` |
+- Rect/buffer nodes with an active VFX payload are skipped in
+  `scene_entry_render` — no border, no shadow, no rounded corners.
+- `corner_radius` on plain rects, single-pixel buffers, and textures is
+  ignored.
 
-The pixman backend falls behind GLES2 quality-wise (no smoothstep for
-anti-aliased corners), but this is the same limitation as any software
-fallback.
+There is no pixman-side SDF, mask, or blur logic for VFX. `scene_entry_render_vfx`
+is only reached when `features.vfx` is set, which only the GLES2 renderer does.
+The visual-override fields (scale, opacity, offset) are the only VFX-adjacent
+features pixman honors, via its existing region/mask composition.
 
 ---
 
 ## Opaque region and damage tracking
 
 Rounded corners make parts of a node transparent that would otherwise be
-opaque. For VFX nodes, the entire node reports zero opaque area because both
-the inner cutout and rounded corners create transparency. This prevents
-incorrect occlusion culling behind the VFX node.
+opaque. Nodes with an active VFX payload report zero opaque area (see "Opaque
+region" above) so content behind them is never culled incorrectly.
 
 Damage tracking itself (`scene_node_update()`) is unchanged — the entire node
-bounding box is damaged when VFX or visual state changes.
+bounding box is damaged when VFX or visual state changes. Because the VFX rect
+bounds include the shadow expansion, the shadow bleed is naturally covered by
+the node's own damage region.
 
 ---
 
@@ -502,23 +570,31 @@ saved buffer at old_size) get different auto-centering shifts, causing visible
 misalignment between siblings. This is why size animation via parent `visual.scale`
 was removed.
 
-### 2. `scene_node_opaque_region` has no VFX case
+### 2. Opaque region must zero-out any node with an active VFX payload
 
-`scene_node_opaque_region()` needed a `WLR_SCENE_NODE_VFX` branch to report
-zero opaque area. Without it, the VFX node's entire bounds were marked as fully
-opaque, causing content behind it to be culled during visibility accumulation.
+`scene_node_opaque_region()` must report zero opaque area for nodes carrying an
+active VFX payload — otherwise the node's full bounds are marked fully opaque
+and content behind it gets culled during visibility accumulation.
 
-**Fix:** `} else if (node->type == WLR_SCENE_NODE_VFX) { return; }`
+**Fix (implemented):** `scene_node_opaque_region` early-returns for both rect
+(wlr_scene.c:269) and buffer (wlr_scene.c:278) nodes when
+`scene_node_vfx_active(node)` is true. This replaced the old
+`WLR_SCENE_NODE_VFX` branch that existed before the VFX type was folded into
+rects.
 
-### 3. Blend mode forced to NONE when uniform `color->a == 1.0`
+### 3. Blend mode must stay PREMULTIPLIED when a border is present
 
-`render_pass_add_rect()` overrides blend mode: `color->a == 1.0` → NONE.
-For a VFX border with opaque paint (alpha=1.0), the shader computes per-pixel
-alpha (center is transparent). With NONE blend, `gl_FragColor = (0,0,0,0)`
-overwrites the framebuffer with black instead of letting content show through.
+With `WLR_RENDER_BLEND_MODE_NONE`, the rect clears the framebuffer instead of
+blending. A VFX rect draws with per-pixel alpha (its center is transparent), so
+NONE would overwrite the framebuffer with the flat color — or with transparent
+black — instead of letting content show through. The old override
+(`color->a == 1.0` → NONE) had the same problem for fully-opaque borders.
 
-**Fix:** When any border thickness is non-zero, force
-`WLR_RENDER_BLEND_MODE_PREMULTIPLIED`.
+**Fix (implemented in GLES2):** `render_pass_add_rect`
+(`render/gles2/pass.c:279-284`) forces `WLR_RENDER_BLEND_MODE_PREMULTIPLIED`
+whenever any `border_thickness` is non-zero; otherwise it uses
+`options->blend_mode` directly. The Vulkan port must replicate this (see the
+Vulkan Porting Guide, task 5).
 
 ### 4. `fwidth()` requires GL_OES_standard_derivatives on GLES2
 
@@ -526,6 +602,8 @@ GLES2 does not support `fwidth()` without explicit extension enable:
 ```glsl
 #extension GL_OES_standard_derivatives : enable
 ```
+The Vulkan equivalent is the optional `fragmentShaderDerivatives` device
+feature (see the Vulkan Porting Guide, task 1).
 
 ### 5. wlroots as a standalone git repo inside sway
 
@@ -542,9 +620,9 @@ The VFX shader's `pos` and `size` are in buffer coordinates (after scaling by
 output scale), but `border_thickness` and `corner_radius` are in logical pixels.
 On HiDPI (scale > 1), the inner rect appears smaller than the content area.
 
-**Fix:** Multiply thickness and radius values by `scale` in `scene_entry_render`,
-and use `roundf()` on each border edge offset to match the content's rounding
-exactly, eliminating sub-pixel gaps:
+**Fix:** Multiply thickness and radius values by `scale` in
+`scene_entry_render_vfx`, and use `roundf()` on each border edge offset to match
+the content's rounding exactly, eliminating sub-pixel gaps:
 
 ```c
 bt_left = roundf((x_rel + left_logical) * s) - roundf(x_rel * s);
@@ -556,16 +634,19 @@ bt_bottom = roundf((y_rel + vh) * s) - roundf((y_rel + vh - bottom_logical) * s)
 ### 7. `WL_OUTPUT_TRANSFORM_FLIPPED_180` projection matrix
 
 The GLES2 render pass creates its projection matrix with
-`WL_OUTPUT_TRANSFORM_FLIPPED_180`. This does not actually flip the Y axis —
-`gl_FragCoord.xy` and the box coordinates are in the same orientation (Y = 0 at
-top, increasing downward). No Y-coordinate adjustment is needed in shaders.
+`WL_OUTPUT_TRANSFORM_FLIPPED_180` (render/gles2/pass.c). This does not actually
+flip the Y axis — `gl_FragCoord.xy` and the box coordinates are in the same
+orientation (Y = 0 at top, increasing downward). No Y-coordinate adjustment is
+needed in shaders.
 
 ### 8. `scene_node_invisible` must be extended for every new VFX effect
 
-`scene_node_invisible()` checks whether a VFX node has active border _or_
-shadow. Adding a new effect (e.g., glow, inner shadow) requires extending this
-check so the node is not skipped during render-list construction when the
-effect is active.
+`scene_node_invisible()` (wlr_scene.c:2113) skips a rect only when its color is
+fully transparent **and** no VFX is active:
+`rect->color[3] == 0.f && !scene_node_vfx_active(node)`. Since sway's VFX rect
+is transparent but has an active payload, it stays in the render list. Adding a
+new effect (e.g., glow, inner shadow) requires extending `scene_node_vfx_active`
+so the node is not skipped when the effect is active.
 
 ### 9. `wlr_scene_animation_cancel` calls `wlr_scene_node_set_visual` for all animations
 
@@ -576,33 +657,31 @@ animations where `anim->to` is a visual struct that was never initialized
 state to all zeros (scale=0, opacity=0). This function is not currently used
 by any caller.
 
-### 10. `quad.frag` has no VFX-free fallback path
+### 10. `quad.frag` has explicit paths for VFX and plain rects
 
-`wlr_render_pass_add_rect()` serves both plain `wlr_scene_rect` nodes and VFX
-border/shadow nodes via the same `quad.frag` shader. The VFX uniforms (border
-thickness, shadow, box) are only populated in the VFX branch of
-`render_pass_add_rect()` — the `else` branch was setting `u_box` to
-`(0,0,0,0)`, making `corner_alpha()` always return 0. Combined with the
-blend-mode override (`color->a == 1.0` → `NONE`), non-VFX rects produced
+`render_pass_add_rect()` serves both plain `wlr_scene_rect` nodes and VFX
+border/shadow nodes via the same `quad.frag` shader. Early versions had no
+VFX-free fallback: the `else` branch left `u_box` at `(0,0,0,0)`, making
+`corner_alpha()` always return 0, and the blend-mode override produced
 transparent black instead of the requested color.
 
-**Fix:** Added an `else` branch that sets `u_box` to the actual rect and
-resets all VFX uniforms to 0. Replaced the blend-mode override with
-`options->blend_mode` directly (callers already provide the correct mode).
-`quad.frag` now early-returns after the VFX border path and uses a
-`color * corner_alpha` fallback for plain rects.
+**Fix (implemented):** `render_pass_add_rect` now always sets `u_box` to the
+actual rect and resets all VFX uniforms to 0 for plain rects (gles2/pass.c:312).
+`quad.frag` now early-returns after the shadow/border paths and ends with a
+plain `color * corner_alpha` fallback — with `corner_radius = 0`,
+`corner_alpha = 1`, so plain rects draw their color unchanged.
 
-### 11. VFX node position/size must extend into parent-managed title bar area
+### 11. VFX rect position/size must extend into parent-managed title bar area
 
-When a tabbed or stacked parent manages title bars, each child's VFX node
+When a tabbed or stacked parent manages title bars, each child's VFX rect
 (border/shadow) must extend upward into the title bar area so corners and
 shadows cover the title bar background. The child's scene tree is offset below
-the title bars, but the VFX node needs to know how much space to extend into.
+the title bars, but the VFX rect needs to know how much space to extend into.
 
 **Fix:** In `arrange_container`, when `title_bar` is false (parent-managed),
 compute `title_ext` from the parent's layout:
 `container_titlebar_height()` for tabbed, `N * container_titlebar_height()`
-for stacked. The VFX node's position is shifted up by `title_ext` and its
+for stacked. The VFX rect's position is shifted up by `title_ext` and its
 height is increased by `title_ext`. `hide_lone_tab` is handled transparently
 because it sets `title_bar = true` (self-managed), which skips the extension
 entirely.
@@ -621,20 +700,23 @@ self-managed and no extension is applied.
 
 ## Vulkan Porting Guide
 
-The Vulkan renderer currently ignores all VFX fields and draws solid rects.
-This section documents what needs to change to add VFX support on Vulkan.
+The Vulkan renderer currently ignores all VFX fields. It never sets
+`features.vfx`, so the capability gate (see "Capability gate") skips
+VFX-active nodes and ignores `corner_radius`. This section is the concrete
+task list to add VFX support to Vulkan.
 
 ### Data flow (already renderer-agnostic)
 
-The scene graph populates `wlr_render_rect_options` in `scene_entry_render()`
-and passes it to `wlr_render_pass_add_rect()`. Both the GLES2 and Vulkan
-backends receive the same struct — Vulkan just doesn't read the extra fields.
+The scene graph populates `wlr_render_rect_options` / `wlr_render_texture_options`
+in `scene_entry_render()` and passes them to `wlr_render_pass_add_rect()` /
+`wlr_render_pass_add_texture()`. Both backends receive the same structs —
+Vulkan just doesn't read the extra fields yet.
 
 ```c
 // include/wlr/render/pass.h
 struct wlr_render_rect_options {
-    struct wlr_box box;
-    struct wlr_render_color color;
+    struct wlr_box box;                  // full VFX bounds, shadow expansion included
+    struct wlr_render_color color;       // = border color for VFX rects
     const pixman_region32_t *clip;
     enum wlr_render_blend_mode blend_mode;
 
@@ -646,83 +728,190 @@ struct wlr_render_rect_options {
 };
 ```
 
-The `wlr_render_texture_options` struct has `float corner_radius[4]` too
-(for corner-clipped textures — no border/shadow needed).
+`wlr_render_texture_options` has `float corner_radius[4]` too (for
+corner-clipped textures — no border/shadow needed).
 
-### What to change in the Vulkan renderer
+### 0. Design overview
 
-#### 1. Fragment shader — `render/vulkan/shaders/quad.frag`
+The GLES2 backend renders VFX in a single SDF fragment pass over clip-rect
+instances. The Vulkan backend already uses the same instanced-clip-rect model
+in `render_pass_add_rect` (render/vulkan/pass.c) and `render_pass_add_texture`.
+The port is therefore mechanical:
 
-Rewrite from a flat-color passthrough to the same SDF-based logic as GLES2:
+- Reuse the GLES2 SDF math in `quad.frag`.
+- Keep per-draw appearance data in **push constants** — the idiomatic vehicle
+  for small per-draw uniforms, and the Vulkan renderer has no uniform-buffer
+  plumbing for draws.
+- The VFX appearance fields (56 bytes) fit the existing fragment push-constant
+  range `[48, 120)` with room to spare.
+- The rect box and corner radius must **not** go in push constants (that would
+  blow the 128-byte budget). Pass them through the **instance vertex stream** as
+  flat varyings instead. This is the one structural change.
 
-```glsl
-#version 450
-layout(push_constant) uniform VfxData {
-    layout(offset = 48) vec4 color;
-    layout(offset = 64) vec4 corner_radius;
-    layout(offset = 80) vec4 border_thickness;
-    layout(offset = 96) vec4 shadow_params; // x=blur_sigma, y=opacity, w=ext
-    layout(offset = 112) vec4 shadow_color;
-    layout(offset = 128) vec4 box;          // x,y,w,h in buffer coords
-} vfx;
+**Alternatives considered and rejected:**
+- *Uniform buffer (UBO) / descriptor set* — the renderer has no descriptor
+  machinery for per-draw data; every draw would need descriptor-pool allocation
+  and binding. Push constants are the right tool for ≤128 bytes of frequently
+  changing data.
+- *box in vertex push constants* — shifts every fragment push offset in the
+  shared pipeline layout (the texture frag block sits at 48 and would move),
+  touches all existing `vkCmdPushConstants` calls and the `static_assert`.
+- *Query `maxPushConstantsSize` and set `features.vfx = true` only if ≥ 136* —
+  couples a feature flag to a hardware capability that the instance-stream
+  approach sidesteps entirely, and leaves the texture corner-radius case over
+  budget anyway.
 
-// Same corner_sdf / corner_alpha / shadow + border layering as quad.frag
-// Use gl_FragCoord.xy - vfx.box.xy for SDF coordinate space
+### 1. Enable `fragmentShaderDerivatives` (or use fixed-width AA)
+
+GLES2's SDF uses `fwidth()` (`GL_OES_standard_derivatives`). In Vulkan,
+`fwidth()`/`dFdx`/`dFdy` require the optional `fragmentShaderDerivatives`
+device feature, which `vulkan_device_create` (render/vulkan/vulkan.c) does not
+currently enable — it enables no `VkPhysicalDeviceFeatures` at all.
+
+Two options:
+
+```c
+// (a) Preferred — matches GLES2 pixel-for-pixel.
+VkPhysicalDeviceFeatures2 feats = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    .features.fragmentShaderDerivatives = VK_TRUE,
+    // pNext chains with the existing samplerYcbcr/sync2/timeline features
+};
 ```
 
-#### 2. Push constant structures — `include/render/vulkan.h`
-
-Currently the frag push constants start at offset 48 (after
-`wlr_vk_vert_pcr_data`'s 48 bytes) and hold one `vec4 color` (16 bytes,
-total 64). The VFX fields need 80 more bytes, pushing the total to 144 —
-over Vulkan's 128-byte minimum guarantee.
-
-**Options to stay in budget:**
-- Pack `corner_radius` into a single `vec4` (already is) — 16 bytes
-- Pack `border_thickness` into a single `vec4` — 16 bytes
-- Pack `shadow_params` into a `vec4` — 16 bytes
-- Pack `shadow_color` into a `vec4` — 16 bytes
-- Drop `box` and compute SDF coords from `gl_FragCoord.xy` minus a `uniform` passed via a descriptor set
-- Or use a **uniform buffer** (VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) for the VFX params instead of push constants
-
-A uniform buffer is cleaner — push constants are best for small, frequently
-changing data under 128 bytes.
-
-#### 3. `render_pass_add_rect` — `render/vulkan/pass.c`
-
-- Force `WLR_RENDER_BLEND_MODE_PREMULTIPLIED` when any `border_thickness` is
-  nonzero, matching the GLES2 fix for quirk #3
-- Expand the draw bounding box by `shadow_blur_sigma * 3` in all directions
-  (the shadow bleed region)
-- Pack the VFX data into the uniform buffer or push constants before dispatch
-
-#### 4. Texture corner-radius — `render_pass_add_texture` + `texture.frag`
-
-`wlr_render_texture_options.corner_radius` is also ignored. The texture
-pipeline's fragment shader needs the same SDF corner clip:
+If the device does not support `fragmentShaderDerivatives`, fall back to a
+fixed-width AA band instead of `fwidth()`:
 
 ```glsl
-float ca = corner_alpha(gl_FragCoord.xy - box.xy, box.zw, corner_radius);
+float ca = clamp(0.5 - d / 0.75, 0.0, 1.0); // ~0.75px AA band
+```
+
+Prefer (a); the fixed-width variant needs no feature and is fully portable.
+
+### 2. Pass box + corner radius through the instance stream
+
+The vertex input layout (`instance_vert_binding` / `instance_vert_attr` in
+render/vulkan/renderer.c) currently has one `vec4` per instance (the normalized
+clip rect). Widen it to three `vec4`s — `inst_rect`, `inst_box`, `inst_corner`
+— and use the **same** layout for both the rect and texture pipelines:
+
+```c
+static const VkVertexInputBindingDescription instance_vert_binding = {
+    .binding = 0,
+    .stride = sizeof(float) * 12,        // was 4
+    .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE,
+};
+static const VkVertexInputAttributeDescription instance_vert_attrs[] = {
+    { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 0  },  // inst_rect
+    { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 16 },  // inst_box
+    { .location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 32 },  // inst_corner
+};
+```
+
+`common.vert` forwards them as flat varyings (the existing `uv` output stays,
+the texture pipeline still consumes it):
+
+```glsl
+layout(location = 1) in vec4 inst_box;
+layout(location = 2) in vec4 inst_corner;
+flat out vec4 v_box;
+flat out vec4 v_corner;
+// ...
+v_box = inst_box;
+v_corner = inst_corner;
+```
+
+Every draw writes the full 12 floats per clip rect:
+- `inst_rect` — the normalized clip rect (as today)
+- `inst_box` — `options->box` / `dst_box` in buffer coordinates
+- `inst_corner` — `options->corner_radius` (all zero for non-VFX draws)
+
+For plain rects `inst_corner = {0,0,0,0}`, so `corner_alpha = 1` and the shared
+shader's fallback path draws the flat color — no special casing.
+
+### 3. `quad.frag` — port the SDF
+
+Replace the flat-color passthrough with the GLES2 SDF
+(render/gles2/shaders/quad.frag): `corner_sdf`, `corner_alpha`, the shadow
+layer (Gaussian falloff clipped out of the inner rect), the border rim
+(outer minus inner), and the plain `color * corner_alpha` fallback.
+
+### 4. Fragment push constants — 56 bytes, fits `[48, 120)`
+
+The pipeline layout's fragment range is already `[48, 120)` (`init_tex_layouts`,
+render/vulkan/renderer.c), so no layout change and no `static_assert` change.
+
+```glsl
+layout(push_constant) uniform Vfx {
+    layout(offset = 48) vec4 color;            // premultiplied linear RGBA
+    layout(offset = 64) vec4 border_thickness; // top, right, bottom, left
+    layout(offset = 80) vec2 shadow;           // x = blur_sigma, y = opacity
+    layout(offset = 88) vec4 shadow_color;     // premultiplied linear RGBA
+} vfx;
+```
+
+`shadow.x`'s extension is computed in-shader as `ext = shadow.x * 3.0`, matching
+`wlr_scene_vfx_shadow_extension` (`blur_sigma * 3.0`). The scene passes the
+already-expanded box in `inst_box`; the shader computes the container rect as
+`inst_box` inset by `ext` — same as the GLES2 `u_shadow.w` mechanism.
+
+### 5. `render_pass_add_rect`
+
+- **Force `WLR_RENDER_BLEND_MODE_PREMULTIPLIED`** whenever any
+  `border_thickness` is non-zero, matching the GLES2 fix (Quirk 3) —
+  otherwise the NONE path (`vkCmdClearAttachments`) would clear instead of
+  blend.
+- **Convert colors to linear premultiplied** before pushing: `color`,
+  `border_color`, and `shadow_color` must go through `color_to_linear_premult`
+  (the existing pattern at pass.c:647-652), because the Vulkan pipeline
+  computes in linear space and the render pass applies sRGB encoding on output.
+  GLES2 works in sRGB and does not convert — the two backends legitimately
+  diverge here.
+- **Do not expand the box.** The scene already sizes the VFX rect to include
+  the shadow extension; the shader insets by `ext`. Expanding again would
+  misalign the border with the content.
+- Replace the current 16-byte color push (pass.c:718-720) with the full 56-byte
+  block from task 4.
+
+### 6. Texture corner radius
+
+`wlr_render_texture_options.corner_radius` is also ignored. With the instance
+stream from task 2, the box and corner radius already arrive as `v_box` /
+`v_corner`, so `texture.frag` needs no push-constant change:
+
+```glsl
+// uv already occupies location 0; box/corner match common.vert outputs
+layout(location = 1) flat in vec4 v_box;
+layout(location = 2) flat in vec4 v_corner;
+// ...
+float ca = corner_alpha(gl_FragCoord.xy - v_box.xy, v_box.zw, v_corner);
 out_color *= ca;
 ```
 
-No border or shadow needed for textures.
+No border or shadow is needed for textures.
 
-### Renderer capability gate (alternative approach)
+### 7. Flip the capability flag
 
-Instead of implementing VFX in Vulkan, add a capability flag so the scene
-graph can skip VFX when the renderer doesn't support it:
+Once tasks 1-6 land, set `features.vfx` in `vulkan_renderer_create_for_device`
+(render/vulkan/renderer.c, alongside the other feature assignments):
 
 ```c
-// include/wlr/render/wlr_renderer.h
-enum wlr_renderer_feature {
-    WLR_RENDERER_FEATURE_VFX,
-};
-
-bool wlr_renderer_has_feature(struct wlr_renderer *r,
-    enum wlr_renderer_feature feature);
+renderer->wlr_renderer.features.vfx = true;
 ```
 
-GLES2 returns true, Vulkan returns false. `scene_entry_render` checks the
-flag and skips `wlr_render_pass_add_rect` for VFX nodes when unsupported.
-This is the minimal fix to avoid rendering garbage on Vulkan.
+Until this is done, the scene keeps skipping VFX on Vulkan — which is the
+current, safe fallback.
+
+### 8. Capability gate (current fallback — already implemented)
+
+`renderer->features.vfx` (include/wlr/render/wlr_renderer.h) is set true only by
+the GLES2 renderer (render/gles2/renderer.c). On Vulkan and pixman:
+
+- `scene_entry_render` breaks out for rect/buffer nodes with an active VFX
+  payload (wlr_scene.c:1661, 1694) — nothing is drawn, no garbage.
+- `corner_radius` on plain rects, single-pixel buffers, and textures is ignored
+  (wlr_scene.c:1682, 1716, 1770).
+
+This is the documented fallback behavior today. Completing tasks 1-7 removes the
+gap. Do not change the gate itself — it is the correct mechanism for renderers
+that genuinely cannot do SDF-style VFX.
