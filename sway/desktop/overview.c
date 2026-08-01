@@ -415,7 +415,8 @@ static void overview_layout_and_enable(struct sway_output *output,
       for (wi = 0; wi < n_ws; wi++) {
         if (ws_info[wi].ws == t->ws) break;
       }
-      if (wi == n_ws && n_ws < MAX_WS) {
+      if (wi == n_ws) {
+        if (n_ws >= MAX_WS) continue;
         ws_info[wi].ws = t->ws;
         ws_info[wi].min_y = INFINITY;
         ws_info[wi].max_y = -INFINITY;

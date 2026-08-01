@@ -2002,25 +2002,21 @@ int container_squash(struct sway_container *con) {
 static void swap_insert(struct sway_container *con,
 		struct sway_container *parent, bool is_float, int index) {
 	if (parent) {
-		// A non-view container (e.g. a column) cannot be a direct child of
-		// another column; flatten it into the parent so the tree stays
-		// well-formed (columns hold views, not nested columns).
-		if (!con->view && !parent->view && parent->pending.layout == L_VERT) {
-			while (con->pending.children->length) {
-				struct sway_container *child = con->pending.children->items[0];
-				container_detach(child);
-				container_insert_child(parent, child, index);
-				index++;
-			}
-			container_reap_empty(con);
-		} else {
-			container_insert_child(parent, con, index);
-		}
+		container_insert_child(parent, con, index);
 	} else if (is_float) {
 		workspace_add_floating(con->pending.workspace, con);
 	} else {
 		workspace_insert_tiling(con->pending.workspace, con, index);
 	}
+}
+
+// A non-view container (e.g. a column) must never become the child of
+// another non-view container: columns hold views only. A swap that would
+// produce such a nesting can't be represented without destroying one of the
+// participants, so refuse it before touching the tree.
+static bool would_nest_container(struct sway_container *con,
+		struct sway_container *parent) {
+	return parent != NULL && !con->view;
 }
 
 static void swap_places(struct sway_container *con1,
@@ -2097,6 +2093,16 @@ void container_swap(struct sway_container *con1, struct sway_container *con2) {
   if (!sway_assert(!container_has_ancestor(con1, con2) &&
                        !container_has_ancestor(con2, con1),
                    "Cannot swap ancestor and descendant")) {
+    return;
+  }
+
+  // Refuse a swap that would nest a column (non-view container) under
+  // another non-view container, before any scratchpad/fullscreen handling
+  // mutates the tree.
+  if (would_nest_container(con1, con2->pending.parent) ||
+      would_nest_container(con2, con1->pending.parent)) {
+    sway_log(SWAY_DEBUG, "Refusing swap that would nest a column under a "
+        "container (con1=%p con2=%p)", (void *)con1, (void *)con2);
     return;
   }
 

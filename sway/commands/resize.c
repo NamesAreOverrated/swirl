@@ -329,14 +329,21 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
   if (amount->unit == MOVEMENT_UNIT_PX) {
     // Convert px to a workspace-relative fraction so the sign from
     // grow/shrink is preserved (tiled_resize_*_frac is fraction-based).
+    // The fraction basis is the usable workspace size (width - inner gaps).
     struct sway_container *col = container_toplevel_ancestor(current);
     struct sway_workspace *ws = col ? col->pending.workspace : NULL;
-    double basis = is_horizontal(axis)
-      ? (ws ? ws->width : current->pending.width)
-      : (ws ? ws->height : current->pending.height);
-    frac = basis > 0 ? amount->amount / basis : 0;
+    if (ws && is_horizontal(axis)) {
+      frac = workspace_width_to_fraction(ws, amount->amount);
+    } else if (ws) {
+      frac = workspace_height_to_fraction(ws, amount->amount);
+    } else {
+      double basis = is_horizontal(axis) ? current->pending.width
+                                         : current->pending.height;
+      frac = basis > 0 ? amount->amount / basis : 0;
+    }
   } else {
-    // PPT/DEFAULT amounts are already percentages of the workspace width.
+    // PPT/DEFAULT amounts are already percentages of the workspace size
+    // along the active axis (width for horizontal, height for vertical).
     frac = amount->amount / 100.0;
   }
 

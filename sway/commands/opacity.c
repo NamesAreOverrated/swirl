@@ -4,7 +4,12 @@
 #include "sway/commands.h"
 #include "sway/tree/container.h"
 #include "sway/output.h"
+#include "sway/tree/root.h"
 #include "log.h"
+
+static void update_opacity(struct sway_container *con, void *data) {
+	container_update(con);
+}
 
 struct cmd_results *cmd_opacity(int argc, char **argv) {
 	struct cmd_results *error = NULL;
@@ -15,7 +20,7 @@ struct cmd_results *cmd_opacity(int argc, char **argv) {
 	struct sway_container *con = config->handler_context.container;
 
 	// Config-time: opacity [focused] <val>
-	if (!config->active) {
+	if (config->reading) {
 		char *err;
 		float val = strtof(argc == 1 ? argv[0] : argv[1], &err);
 		if (*err) {
@@ -29,10 +34,17 @@ struct cmd_results *cmd_opacity(int argc, char **argv) {
 		} else {
 			config->opacity = val;
 		}
+		if (config->active) {
+			root_for_each_container(update_opacity, NULL);
+		}
 		return cmd_results_new(CMD_SUCCESS, NULL);
 	}
 
 	// Runtime: opacity [set|plus|minus] <val>
+	if (!con) {
+		return cmd_results_new(CMD_FAILURE, "No container to set opacity on");
+	}
+
 	char *err;
 	float val = strtof(argc == 1 ? argv[0] : argv[1], &err);
 	if (*err) {

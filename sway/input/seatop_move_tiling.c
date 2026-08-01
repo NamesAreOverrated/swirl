@@ -139,7 +139,8 @@ static void split_border(double pos, int offset, int len, int n_children,
 }
 
 static bool split_titlebar(struct sway_node *node, struct sway_container *avoid,
-		struct wlr_cursor *cursor, struct wlr_box *title_box, bool *after) {
+		struct wlr_cursor *cursor, struct wlr_box *title_box, bool *after,
+		double off_x, double off_y, double tiling_off_x, double tiling_off_y) {
 	struct sway_container *con = node->sway_container;
 	struct sway_node *parent = con->pending.parent ?
 		&con->pending.parent->node : NULL;
@@ -158,13 +159,18 @@ static bool split_titlebar(struct sway_node *node, struct sway_container *avoid,
 		avoid_index = -1;
 	}
 	// Container boxes are in tiling-layer space; convert to screen so they
-	// can be compared to the (global) cursor position.
-	struct sway_workspace *ws = con->pending.workspace;
-	if (ws && ws->output) {
-		box.x += ws->output->lx + ws->current_gaps.left +
-			ws->output->usable_area.x - ws->viewport_x;
-		box.y += ws->output->ly + ws->current_gaps.top +
-			ws->output->usable_area.y - ws->viewport_y;
+	// can be compared to the (global) cursor position. A box owned by a
+	// top-level container is tiling-layer-relative (add tiling_off); a box
+	// inside a column is column-relative (add the full off, which also
+	// accounts for the column offset and scroll).
+	struct sway_container *box_owner =
+		(layout == L_TABBED || layout == L_STACKED) ? con->pending.parent : con;
+	if (box_owner && box_owner->pending.parent) {
+		box.x += off_x;
+		box.y += off_y;
+	} else {
+		box.x += tiling_off_x;
+		box.y += tiling_off_y;
 	}
 	if (layout == L_STACKED && cursor->y < box.y + title_height * n_children) {
 		// Drop into stacked titlebars.
@@ -233,10 +239,11 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	// Used to convert pending coords into screen space for edge detection
 	// and indicator positioning (accounts for viewport + column + scroll).
 	double off_x = 0, off_y = 0;
+	double tiling_off_x = 0, tiling_off_y = 0;
 	struct sway_workspace *ws = con->pending.workspace;
 	if (ws && ws->output) {
-		double tiling_off_x = ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
-		double tiling_off_y = ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
+		tiling_off_x = ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
+		tiling_off_y = ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
 		struct sway_container *col = container_toplevel_ancestor(con);
 		double col_px = (col && !col->view) ? col->pending.x : 0;
 		double col_py = (col && !col->view) ? col->pending.y : 0;
@@ -256,7 +263,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	// container is not a descendant of the source container.
 	if (!surface && !container_has_ancestor(con, e->con) &&
 			split_titlebar(node, e->con, cursor->cursor,
-				&drop_box, &e->insert_after_target)) {
+				&drop_box, &e->insert_after_target,
+				off_x, off_y, tiling_off_x, tiling_off_y)) {
 		sway_log(SWAY_DEBUG, "DRAG: titlebar drop split_target=%d", con == e->con);
 		if (con == e->con) {
 			set_target_node(e, NULL);
