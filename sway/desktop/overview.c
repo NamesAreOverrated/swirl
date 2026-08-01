@@ -250,10 +250,12 @@ static void overview_collect(struct sway_container *con,
                              struct wlr_allocator *alloc,
                              const struct wlr_drm_format *fmt,
                              float scale, int bt, int *idx) {
-  if (con->view && con->view->saved_buffer) {
-    (*idx)++;
-    overview_thumbnail_create(con, ws, output, active_ws,
-                              renderer, alloc, fmt, scale, bt, *idx);
+  if (con->view) {
+    if (con->view->saved_buffer) {
+      (*idx)++;
+      overview_thumbnail_create(con, ws, output, active_ws,
+                                renderer, alloc, fmt, scale, bt, *idx);
+    }
     return;
   }
   for (int i = 0; i < con->current.children->length; i++) {
@@ -413,7 +415,7 @@ static void overview_layout_and_enable(struct sway_output *output,
       for (wi = 0; wi < n_ws; wi++) {
         if (ws_info[wi].ws == t->ws) break;
       }
-      if (wi == n_ws) {
+      if (wi == n_ws && n_ws < MAX_WS) {
         ws_info[wi].ws = t->ws;
         ws_info[wi].min_y = INFINITY;
         ws_info[wi].max_y = -INFINITY;
@@ -501,8 +503,12 @@ static void overview_layout_and_enable(struct sway_output *output,
 static void overview_teardown(void) {
   struct overview_thumbnail *t, *tmp;
   wl_list_for_each_safe(t, tmp, &state.thumbnails, link) {
-    wlr_scene_node_destroy(&t->sb->node);
-    wlr_scene_node_destroy(&t->badge_sb->node);
+    if (t->sb) {
+      wlr_scene_node_destroy(&t->sb->node);
+    }
+    if (t->badge_sb) {
+      wlr_scene_node_destroy(&t->badge_sb->node);
+    }
     wl_list_remove(&t->link);
     free(t);
   }

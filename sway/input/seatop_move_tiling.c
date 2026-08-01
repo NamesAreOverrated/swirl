@@ -141,7 +141,8 @@ static void split_border(double pos, int offset, int len, int n_children,
 static bool split_titlebar(struct sway_node *node, struct sway_container *avoid,
 		struct wlr_cursor *cursor, struct wlr_box *title_box, bool *after) {
 	struct sway_container *con = node->sway_container;
-	struct sway_node *parent = &con->pending.parent->node;
+	struct sway_node *parent = con->pending.parent ?
+		&con->pending.parent->node : NULL;
 	int title_height = container_titlebar_height();
 	struct wlr_box box;
 	int n_children, avoid_index;
@@ -155,6 +156,15 @@ static bool split_titlebar(struct sway_node *node, struct sway_container *avoid,
 		node_get_box(node, &box);
 		n_children = 1;
 		avoid_index = -1;
+	}
+	// Container boxes are in tiling-layer space; convert to screen so they
+	// can be compared to the (global) cursor position.
+	struct sway_workspace *ws = con->pending.workspace;
+	if (ws && ws->output) {
+		box.x += ws->output->lx + ws->current_gaps.left +
+			ws->output->usable_area.x - ws->viewport_x;
+		box.y += ws->output->ly + ws->current_gaps.top +
+			ws->output->usable_area.y - ws->viewport_y;
 	}
 	if (layout == L_STACKED && cursor->y < box.y + title_height * n_children) {
 		// Drop into stacked titlebars.
@@ -225,8 +235,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	double off_x = 0, off_y = 0;
 	struct sway_workspace *ws = con->pending.workspace;
 	if (ws && ws->output) {
-		double tiling_off_x = ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
-		double tiling_off_y = ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
+		double tiling_off_x = ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
+		double tiling_off_y = ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
 		struct sway_container *col = container_toplevel_ancestor(con);
 		double col_px = (col && !col->view) ? col->pending.x : 0;
 		double col_py = (col && !col->view) ? col->pending.y : 0;
@@ -279,8 +289,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		node_get_box(node_get_parent(&con->node), &box);
 		// Container boxes (e.g. column) are in tiling-layer space; convert to screen.
 		if (ws && ws->output && node_get_parent(&con->node)->type == N_CONTAINER) {
-			box.x += ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
-			box.y += ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
+			box.x += ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
+			box.y += ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
 		}
 		if (layout == L_HORIZ || layout == L_TABBED) {
 			if (cursor->cursor->y < thresh_top) {
@@ -404,8 +414,8 @@ static void finalize_move(struct sway_seat *seat) {
 	sway_log(SWAY_DEBUG, "DRAG: finalize con=%p target_type=%d target_edge=%d split=%d",
 		(void*)con, target_node->type, e->target_edge, e->split_target);
 
-	if (target_node->type == N_WORKSPACE && e->target_edge == WLR_EDGE_NONE) {
-		sway_log(SWAY_DEBUG, "DRAG: finalize -> workspace_add_tiling (empty ws)");
+	if (target_node->type == N_WORKSPACE) {
+		sway_log(SWAY_DEBUG, "DRAG: finalize -> workspace_add_tiling (workspace drop)");
 		con = workspace_add_tiling(new_ws, con);
 	} else {
 		struct sway_container *target = target_node->sway_container;

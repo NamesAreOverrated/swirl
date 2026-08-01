@@ -49,7 +49,8 @@ struct cmd_results *cmd_swap(int argc, char **argv) {
 		struct sway_container *fc = container_toplevel_ancestor(focus);
 		struct sway_container *tc = container_toplevel_ancestor(target);
 
-		if (list_find(fc->pending.workspace->tiling, fc) >= 0 &&
+		if (fc->pending.workspace && tc->pending.workspace &&
+				list_find(fc->pending.workspace->tiling, fc) >= 0 &&
 				list_find(tc->pending.workspace->tiling, tc) >= 0 &&
 				fc != tc) {
 			workspace_swap_columns(fc, tc);
@@ -59,7 +60,8 @@ struct cmd_results *cmd_swap(int argc, char **argv) {
 		}
 
 		arrange_workspace(focus->pending.workspace);
-		if (target->pending.workspace != focus->pending.workspace) {
+		if (target->pending.workspace &&
+				target->pending.workspace != focus->pending.workspace) {
 			arrange_workspace(target->pending.workspace);
 		}
 		transaction_commit_dirty();
