@@ -14,6 +14,7 @@
 #include "sway/server.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
+#include "sway/tree/layout.h"
 #include "sway/tree/root.h"
 #include "sway/tree/workspace.h"
 #include "stringop.h"
@@ -220,9 +221,18 @@ static void container_move_to_workspace(struct sway_container *container,
 		}
 	} else {
 		container_detach(container);
-		if (workspace_is_empty(workspace) && container->pending.children) {
-			workspace_unwrap_children(workspace, container);
-			container_reap_empty(container);
+		if (container->pending.children) {
+			// Column/split container: keep it intact. Bare views in
+			// workspace->tiling are never arranged, so preserve the column
+			// and size it from its width_fraction on the new workspace.
+			if (container->width_fraction <= 0) {
+				container->width_fraction = layout_get_default_width(workspace);
+			}
+			container->pending.width =
+				workspace_width_fraction(workspace, container->width_fraction);
+			container->pending.height =
+				workspace_height_fraction(workspace, 1.0);
+			workspace_add_tiling(workspace, container);
 		} else {
 			container->pending.width = container->pending.height = 0;
 			container->width_fraction = container->height_fraction = 0;

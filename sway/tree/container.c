@@ -1999,6 +1999,30 @@ int container_squash(struct sway_container *con) {
   return change;
 }
 
+static void swap_insert(struct sway_container *con,
+		struct sway_container *parent, bool is_float, int index) {
+	if (parent) {
+		// A non-view container (e.g. a column) cannot be a direct child of
+		// another column; flatten it into the parent so the tree stays
+		// well-formed (columns hold views, not nested columns).
+		if (!con->view && !parent->view && parent->pending.layout == L_VERT) {
+			while (con->pending.children->length) {
+				struct sway_container *child = con->pending.children->items[0];
+				container_detach(child);
+				container_insert_child(parent, child, index);
+				index++;
+			}
+			container_reap_empty(con);
+		} else {
+			container_insert_child(parent, con, index);
+		}
+	} else if (is_float) {
+		workspace_add_floating(con->pending.workspace, con);
+	} else {
+		workspace_insert_tiling(con->pending.workspace, con, index);
+	}
+}
+
 static void swap_places(struct sway_container *con1,
                         struct sway_container *con2) {
   struct sway_container *temp = malloc(sizeof(struct sway_container));
@@ -2027,22 +2051,9 @@ static void swap_places(struct sway_container *con1,
   con2->height_fraction = temp->height_fraction;
 
   int temp_index = container_sibling_index(con1);
-  if (con2->pending.parent) {
-    container_insert_child(con2->pending.parent, con1,
-                           container_sibling_index(con2));
-  } else if (container_is_floating(con2)) {
-    workspace_add_floating(con2->pending.workspace, con1);
-  } else {
-    workspace_insert_tiling(con2->pending.workspace, con1,
-                            container_sibling_index(con2));
-  }
-  if (temp->pending.parent) {
-    container_insert_child(temp->pending.parent, con2, temp_index);
-  } else if (temp_floating) {
-    workspace_add_floating(temp->pending.workspace, con2);
-  } else {
-    workspace_insert_tiling(temp->pending.workspace, con2, temp_index);
-  }
+  swap_insert(con1, con2->pending.parent, container_is_floating(con2),
+              container_sibling_index(con2));
+  swap_insert(con2, temp->pending.parent, temp_floating, temp_index);
 
   free(temp);
 }
