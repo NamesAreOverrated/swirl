@@ -19,7 +19,7 @@ struct cmd_results *cmd_corner_radius(int argc, char **argv) {
 	if (*err) {
 		return cmd_results_new(CMD_INVALID, "corner_radius int invalid");
 	}
-	if (val < 0) {
+	if (val < 0 || val > 100) {
 		return cmd_results_new(CMD_FAILURE, "corner_radius value out of bounds");
 	}
 

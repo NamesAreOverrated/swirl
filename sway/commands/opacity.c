@@ -6,10 +6,6 @@
 #include "sway/output.h"
 #include "log.h"
 
-static void update_opacity(struct sway_container *con, void *data) {
-	container_update(con);
-}
-
 struct cmd_results *cmd_opacity(int argc, char **argv) {
 	struct cmd_results *error = NULL;
 	if ((error = checkarg(argc, "opacity", EXPECTED_AT_LEAST, 1))) {
@@ -19,7 +15,7 @@ struct cmd_results *cmd_opacity(int argc, char **argv) {
 	struct sway_container *con = config->handler_context.container;
 
 	// Config-time: opacity [focused] <val>
-	if (con == NULL) {
+	if (!config->active) {
 		char *err;
 		float val = strtof(argc == 1 ? argv[0] : argv[1], &err);
 		if (*err) {
@@ -32,9 +28,6 @@ struct cmd_results *cmd_opacity(int argc, char **argv) {
 			config->opacity_focused = val;
 		} else {
 			config->opacity = val;
-		}
-		if (config->active) {
-			root_for_each_container(update_opacity, NULL);
 		}
 		return cmd_results_new(CMD_SUCCESS, NULL);
 	}

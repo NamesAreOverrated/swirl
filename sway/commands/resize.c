@@ -325,12 +325,25 @@ static struct cmd_results *resize_adjust_tiled(uint32_t axis,
                            "Cannot resize a hidden scratchpad container");
   }
 
-  double sign = amount->amount > 0 ? 1.0 : -1.0;
+  double frac;
+  if (amount->unit == MOVEMENT_UNIT_PX) {
+    // Convert px to a workspace-relative fraction so the sign from
+    // grow/shrink is preserved (tiled_resize_*_frac is fraction-based).
+    struct sway_container *col = container_toplevel_ancestor(current);
+    struct sway_workspace *ws = col ? col->pending.workspace : NULL;
+    double basis = is_horizontal(axis)
+      ? (ws ? ws->width : current->pending.width)
+      : (ws ? ws->height : current->pending.height);
+    frac = basis > 0 ? amount->amount / basis : 0;
+  } else {
+    // PPT/DEFAULT amounts are already percentages of the workspace width.
+    frac = amount->amount / 100.0;
+  }
 
   if (is_horizontal(axis)) {
-    tiled_resize_horizontal_frac(current, sign * 0.1);
+    tiled_resize_horizontal_frac(current, frac);
   } else {
-    tiled_resize_vertical_frac(current, sign * 0.1);
+    tiled_resize_vertical_frac(current, frac);
   }
   return cmd_results_new(CMD_SUCCESS, NULL);
 }

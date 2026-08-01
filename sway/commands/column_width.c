@@ -17,6 +17,10 @@ struct cmd_results *cmd_column_width(int argc, char **argv) {
 		return cmd_results_new(CMD_INVALID,
 			"Expected `column_width default|min <fraction>'");
 	}
+	if (val <= 0 || val > 1) {
+		return cmd_results_new(CMD_FAILURE,
+			"column_width fraction must be in the range (0, 1]");
+	}
 
 	if (strcmp(argv[0], "default") == 0) {
 		config->default_column_width_fraction = val;
