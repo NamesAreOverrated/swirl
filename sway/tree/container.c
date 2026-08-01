@@ -79,6 +79,16 @@ struct sway_container *container_create(struct sway_view *view) {
     // Enabled/disabled by container_update_border() once there is something
     // to draw (border or shadow).
     wlr_scene_node_set_enabled(&c->border.vfx->node, false);
+
+    // Input-only rect covering the whole box. The VFX rect is skipped during
+    // hit-testing, so without this the border strip would resolve to nothing
+    // (the workspace node), breaking border hover/drag resize. Kept below the
+    // content tree so it never captures clicks meant for the view.
+    c->border.bg = wlr_scene_rect_create(c->border.tree, 0, 0, transparent);
+    if (!c->border.bg) {
+      failed = true;
+    }
+    wlr_scene_node_place_below(&c->border.bg->node, &c->content_tree->node);
   }
 
   c->title_bar.tree = alloc_scene_tree(c->scene_tree, &failed);
@@ -312,6 +322,11 @@ void container_update_border(struct sway_container *con, int width, int height,
                               -shadow_ext - title_ext);
   wlr_scene_rect_set_size(con->border.vfx, width + shadow_ext * 2,
                           height + title_ext + shadow_ext * 2);
+
+  // Input background: cover the whole box so border pixels resolve to this
+  // container during hit-testing (the VFX rect above is skipped).
+  wlr_scene_node_set_position(&con->border.bg->node, 0, 0);
+  wlr_scene_rect_set_size(con->border.bg, width, height);
 
   struct wlr_scene_node_vfx vfx = {0};
   if (con->border.vfx->node.vfx != NULL) {
