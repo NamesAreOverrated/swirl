@@ -86,7 +86,7 @@ struct sway_container {
 
   struct {
     struct wlr_scene_tree *tree;
-    struct wlr_scene_vfx *vfx;
+    struct wlr_scene_rect *vfx;
   } border;
 
   struct wlr_scene_tree *content_tree;
@@ -367,6 +367,14 @@ int container_squash(struct sway_container *con);
 void container_arrange_title_bar(struct sway_container *con);
 
 void container_update(struct sway_container *con);
+
+/**
+ * Update the border VFX node (position, size, border, corner radius, shadow,
+ * border color) of a view container. Width/height are the container's outer
+ * box dimensions. This is the single owner of the border VFX node state.
+ */
+void container_update_border(struct sway_container *con, int width, int height,
+    bool title_bar);
 
 void container_update_itself_and_parents(struct sway_container *con);
 

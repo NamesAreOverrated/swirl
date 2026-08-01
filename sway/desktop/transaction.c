@@ -471,50 +471,7 @@ static void arrange_container(struct sway_container *con, int width, int height,
     int border_left = con->current.border_left ? border_width : 0;
 
     if (con->border.vfx) {
-
-      int title_ext = 0;
-      if (!title_bar && con->current.border != B_NORMAL) {
-        struct sway_container *p = con->current.parent;
-        if (p && p->current.layout == L_STACKED) {
-          title_ext = container_titlebar_height() * p->current.children->length;
-        } else {
-          title_ext = container_titlebar_height();
-        }
-      }
-      int shadow_ext = config->shadow_enabled ? config->shadow_blur_radius * 3 : 0;
-      wlr_scene_node_set_position(&con->border.vfx->node, -shadow_ext,
-                                  -shadow_ext - title_ext);
-      wlr_scene_vfx_set_size(con->border.vfx, width + shadow_ext * 2,
-                             height + title_ext + shadow_ext * 2);
-
-      struct wlr_scene_node_vfx vfx = {0};
-      if (con->border.vfx->node.vfx != NULL) {
-        vfx = *con->border.vfx->node.vfx;
-      }
-      vfx.border.thickness[0] = (title_bar && con->current.border == B_NORMAL) ? 0 : border_top;
-      vfx.border.thickness[1] = con->current.border_right ? border_width : 0;
-      vfx.border.thickness[2] = con->current.border_bottom ? border_width : 0;
-      vfx.border.thickness[3] = border_left;
-      float r = config->corner_radius;
-      if (border_top == 0 && border_width == 0) {
-        r = 0;
-      }
-      vfx.corner_radius[0] = r;
-      vfx.corner_radius[1] = r;
-      vfx.corner_radius[2] = r;
-      vfx.corner_radius[3] = r;
-      if (config->shadow_enabled) {
-        vfx.shadow.blur_sigma = (float)config->shadow_blur_radius;
-        vfx.shadow.opacity = config->shadow_opacity;
-        vfx.shadow.color[0] = config->shadow_color[0];
-        vfx.shadow.color[1] = config->shadow_color[1];
-        vfx.shadow.color[2] = config->shadow_color[2];
-        vfx.shadow.color[3] = config->shadow_color[3];
-      } else {
-        vfx.shadow.blur_sigma = 0.0f;
-        vfx.shadow.opacity = 0.0f;
-      }
-      wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
+      container_update_border(con, width, height, title_bar);
     }
 
     // make sure to reparent, it's possible that the client just came out of

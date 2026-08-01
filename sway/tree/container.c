@@ -62,7 +62,7 @@ struct sway_container *container_create(struct sway_view *view) {
   //     - title text
   //     - marks text
   //   - border
-  //     - vfx (view containers only, shader draws border + shadow)
+  //     - vfx rect (view containers only, shader draws border + shadow)
   //     - content_tree
   bool failed = false;
   c->scene_tree = alloc_scene_tree(root->staging, &failed);
@@ -71,10 +71,14 @@ struct sway_container *container_create(struct sway_view *view) {
   c->content_tree = alloc_scene_tree(c->border.tree, &failed);
 
   if (view) {
-    c->border.vfx = wlr_scene_vfx_create(c->border.tree, 0, 0);
+    const float transparent[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    c->border.vfx = wlr_scene_rect_create(c->border.tree, 0, 0, transparent);
     if (!c->border.vfx) {
       failed = true;
     }
+    // Enabled/disabled by container_update_border() once there is something
+    // to draw (border or shadow).
+    wlr_scene_node_set_enabled(&c->border.vfx->node, false);
   }
 
   c->title_bar.tree = alloc_scene_tree(c->scene_tree, &failed);
@@ -184,6 +188,147 @@ static void scene_rect_set_color(struct wlr_scene_rect *rect,
   wlr_scene_rect_set_color(rect, premultiplied);
 }
 
+static bool container_vfx_active(const struct wlr_scene_node_vfx *vfx) {
+  return vfx->border.thickness[0] > 0 || vfx->border.thickness[1] > 0 ||
+      vfx->border.thickness[2] > 0 || vfx->border.thickness[3] > 0 ||
+      (vfx->shadow.blur_sigma > 0.0f && vfx->shadow.opacity > 0.0f &&
+       vfx->shadow.color[3] > 0.0f);
+}
+
+static bool container_manages_own_title_bar(struct sway_container *con) {
+  struct sway_container *p = con->current.parent;
+  if (p && (p->current.layout == L_TABBED || p->current.layout == L_STACKED)) {
+    if (config->hide_lone_tab && p->current.children->length == 1 &&
+        p->current.children->items[0] == con && con->view &&
+        con->current.border != B_NORMAL) {
+      return true;
+    }
+    return false;
+  }
+  return true;
+}
+
+// Recompute border dims exactly like arrange_container does. Shared by the
+// arrange-time border update and the config/focus refresh so the corner
+// radius zeroing stays consistent.
+static void container_compute_border_dims(struct sway_container *con,
+    bool title_bar, int *border_top, int *border_width, int *border_left) {
+  int bt = container_titlebar_height();
+  int bw = con->current.border_thickness;
+
+  if (con->current.border == B_NORMAL) {
+    if (!title_bar) {
+      bt = 0;
+    }
+  } else if (con->current.border == B_PIXEL) {
+    bt = title_bar && con->current.border_top ? bw : 0;
+  } else if (con->current.border == B_NONE) {
+    bt = 0;
+    bw = 0;
+  } else if (con->current.border == B_CSD) {
+    bt = 0;
+    bw = 0;
+  }
+
+  *border_top = bt;
+  *border_width = bw;
+  *border_left = con->current.border_left ? bw : 0;
+}
+
+// Refresh the config/focus-owned VFX state (border color, corner radius,
+// shadow) while preserving the arrange-owned geometry and border thickness.
+// The rect is enabled only when there is something to draw (border or shadow);
+// otherwise it must not render or capture input.
+static void container_update_border_state(struct sway_container *con) {
+  struct wlr_scene_node_vfx vfx = {0};
+  if (con->border.vfx->node.vfx != NULL) {
+    vfx = *con->border.vfx->node.vfx;
+  }
+
+  int border_top, border_width, border_left;
+  container_compute_border_dims(con, container_manages_own_title_bar(con),
+                                &border_top, &border_width, &border_left);
+  float r = config->corner_radius;
+  if (border_top == 0 && border_width == 0) {
+    r = 0;
+  }
+  vfx.corner_radius[0] = r;
+  vfx.corner_radius[1] = r;
+  vfx.corner_radius[2] = r;
+  vfx.corner_radius[3] = r;
+
+  struct border_colors *colors = container_get_current_colors(con);
+  float alpha = con->alpha;
+  vfx.border.color[0] =
+      colors->child_border[0] * colors->child_border[3] * alpha;
+  vfx.border.color[1] =
+      colors->child_border[1] * colors->child_border[3] * alpha;
+  vfx.border.color[2] =
+      colors->child_border[2] * colors->child_border[3] * alpha;
+  vfx.border.color[3] = colors->child_border[3] * alpha;
+
+  if (config->shadow_enabled) {
+    vfx.shadow.blur_sigma = (float)config->shadow_blur_radius;
+    vfx.shadow.opacity = config->shadow_opacity;
+    vfx.shadow.color[0] = config->shadow_color[0];
+    vfx.shadow.color[1] = config->shadow_color[1];
+    vfx.shadow.color[2] = config->shadow_color[2];
+    vfx.shadow.color[3] = config->shadow_color[3];
+  } else {
+    vfx.shadow.blur_sigma = 0.0f;
+    vfx.shadow.opacity = 0.0f;
+  }
+
+  wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
+
+  bool active = container_vfx_active(&vfx);
+  wlr_scene_node_set_enabled(&con->border.vfx->node, active);
+}
+
+void container_update_border(struct sway_container *con, int width, int height,
+    bool title_bar) {
+  if (!con->view || !con->border.vfx) {
+    return;
+  }
+
+  int border_top, border_width, border_left;
+  container_compute_border_dims(con, title_bar, &border_top, &border_width,
+                                &border_left);
+
+  int title_ext = 0;
+  if (!title_bar && con->current.border != B_NORMAL) {
+    struct sway_container *p = con->current.parent;
+    if (p && p->current.layout == L_STACKED) {
+      title_ext = container_titlebar_height() * p->current.children->length;
+    } else {
+      title_ext = container_titlebar_height();
+    }
+  }
+  int shadow_ext = config->shadow_enabled
+      ? (int)wlr_scene_vfx_shadow_extension(config->shadow_blur_radius)
+      : 0;
+
+  wlr_scene_node_set_position(&con->border.vfx->node, -shadow_ext,
+                              -shadow_ext - title_ext);
+  wlr_scene_rect_set_size(con->border.vfx, width + shadow_ext * 2,
+                          height + title_ext + shadow_ext * 2);
+
+  struct wlr_scene_node_vfx vfx = {0};
+  if (con->border.vfx->node.vfx != NULL) {
+    vfx = *con->border.vfx->node.vfx;
+  }
+  vfx.border.thickness[0] =
+      (title_bar && con->current.border == B_NORMAL) ? 0 : border_top;
+  vfx.border.thickness[1] = con->current.border_right ? border_width : 0;
+  vfx.border.thickness[2] = con->current.border_bottom ? border_width : 0;
+  vfx.border.thickness[3] = border_left;
+  wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
+
+  container_update_border_state(con);
+
+  wlr_scene_rect_set_color(con->border.vfx, (float[4]){0.0f, 0.0f, 0.0f, 0.0f});
+}
+
 void container_update(struct sway_container *con) {
   struct border_colors *colors = container_get_current_colors(con);
   float alpha = con->alpha;
@@ -200,35 +345,7 @@ void container_update(struct sway_container *con) {
   }
 
   if (con->view && con->border.vfx) {
-    struct wlr_scene_node_vfx vfx = {0};
-    if (con->border.vfx->node.vfx != NULL) {
-      vfx = *con->border.vfx->node.vfx;
-    }
-    float r = config->corner_radius;
-
-    vfx.border.color[0] =
-        colors->child_border[0] * colors->child_border[3] * alpha;
-    vfx.border.color[1] =
-        colors->child_border[1] * colors->child_border[3] * alpha;
-    vfx.border.color[2] =
-        colors->child_border[2] * colors->child_border[3] * alpha;
-    vfx.border.color[3] = colors->child_border[3] * alpha;
-    vfx.corner_radius[0] = r;
-    vfx.corner_radius[1] = r;
-    vfx.corner_radius[2] = r;
-    vfx.corner_radius[3] = r;
-    if (config->shadow_enabled) {
-      vfx.shadow.blur_sigma = (float)config->shadow_blur_radius;
-      vfx.shadow.opacity = config->shadow_opacity;
-      vfx.shadow.color[0] = config->shadow_color[0];
-      vfx.shadow.color[1] = config->shadow_color[1];
-      vfx.shadow.color[2] = config->shadow_color[2];
-      vfx.shadow.color[3] = config->shadow_color[3];
-    } else {
-      vfx.shadow.blur_sigma = 0.0f;
-      vfx.shadow.opacity = 0.0f;
-    }
-    wlr_scene_node_set_vfx(&con->border.vfx->node, &vfx);
+    container_update_border_state(con);
   }
 
   if (con->title_bar.title_text) {
