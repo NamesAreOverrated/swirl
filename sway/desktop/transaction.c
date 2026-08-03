@@ -585,7 +585,15 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
     wlr_scene_node_set_position(&col->scene_tree->node, col->current.x,
                                 col->current.y);
     wlr_scene_node_reparent(&col->scene_tree->node, ws->layers.tiling);
-    wlr_scene_node_raise_to_top(&col->scene_tree->node);
+    // Raising each column in list order restores the same scene order anyway,
+    // but every raise after the first reorders the node and re-damages its
+    // full box on EVERY arrange (whole-workspace redraws per commit). Only the
+    // last column needs raising to keep the column group above other tiling
+    // children; raise_to_top's own guard makes this a no-op when it's already
+    // on top.
+    if (i == ws->current.tiling->length - 1) {
+      wlr_scene_node_raise_to_top(&col->scene_tree->node);
+    }
     wlr_scene_node_set_enabled(&col->scene_tree->node, true);
 
     if (!col->view && col->current.children &&
