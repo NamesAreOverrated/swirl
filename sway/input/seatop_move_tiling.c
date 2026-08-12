@@ -237,7 +237,7 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 
 	// Compute layout→screen offset for this container.
 	// Used to convert pending coords into screen space for edge detection
-	// and indicator positioning (accounts for viewport + column + scroll).
+	// and indicator positioning (accounts for viewport + column).
 	double off_x = 0, off_y = 0;
 	double tiling_off_x = 0, tiling_off_y = 0;
 	struct sway_workspace *ws = con->pending.workspace;
@@ -247,9 +247,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		struct sway_container *col = container_toplevel_ancestor(con);
 		double col_px = (col && !col->view) ? col->pending.x : 0;
 		double col_py = (col && !col->view) ? col->pending.y : 0;
-		double col_sy = (col && !col->view) ? col->pending.scroll_y : 0;
 		off_x = tiling_off_x + col_px;
-		off_y = tiling_off_y + col_py - col_sy;
+		off_y = tiling_off_y + col_py;
 	}
 
 	struct wlr_box drop_box = {

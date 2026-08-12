@@ -341,14 +341,6 @@ void arrange_workspace(struct sway_workspace *workspace) {
 		if (focus && workspace_is_visible(workspace)) {
 			viewport_compute_offset(workspace, focus,
 				box.width, box.height);
-
-			struct sway_container *focused_win =
-				seat_get_focus_inactive_view(seat, &focus->node);
-			if (focus->pending.layout == L_VERT) {
-				column_scroll_vert_to(focus, focused_win, box.height);
-			} else {
-				focus->pending.scroll_y = 0;
-			}
 		} else {
 			workspace->viewport_x = 0;
 			workspace->viewport_y = 0;

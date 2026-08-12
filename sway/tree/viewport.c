@@ -18,33 +18,6 @@
 #include "sway/commands.h"
 #include "sway/tree/column.h"
 
-static bool fully_visible(double x, double w, double vp, double vpl) {
-	return x >= vp && x + w <= vp + vpl;
-}
-
-static double total_extent_v(list_t *children, int gaps) {
-	double total = 0;
-	for (int i = 0; i < children->length; ++i) {
-		struct sway_container *c = children->items[i];
-		total += c->pending.height;
-		if (i < children->length - 1) {
-			total += gaps;
-		}
-	}
-	return total;
-}
-
-static double edge_snap_vert(double con_y, double con_h, double vp,
-		double area_h, double max_y) {
-	if (fully_visible(con_y, con_h, vp, area_h)) {
-		return vp;
-	}
-	double target = con_y < vp ? con_y : con_y + con_h - area_h;
-	target = target < 0.0 ? 0.0 : target;
-	target = target > max_y ? max_y : target;
-	return target;
-}
-
 void workspace_arrange_columns(struct sway_workspace *ws,
 		struct wlr_box *parent) {
 	if (!ws->tiling || ws->tiling->length == 0) {
@@ -103,18 +76,30 @@ void viewport_arrange_windows(struct sway_container *col) {
 
 	struct sway_workspace *ws = col->pending.workspace;
 	double gap = ws ? ws->gaps_inner : 0;
+	int n = col->pending.children->length;
 
-	for (int i = 0; i < col->pending.children->length; ++i) {
+	// Fit-to-height: normalize height fractions so the windows always fill the
+	// column height (no vertical overflow/scroll). Ratios are preserved.
+	double total_hf = 0;
+	for (int i = 0; i < n; ++i) {
 		struct sway_container *child = col->pending.children->items[i];
-		double hf = child->height_fraction;
-		if (hf <= 0) hf = 1.0;
-		child->pending.height = workspace_height_fraction(ws, hf);
+		total_hf += child->height_fraction > 0 ? child->height_fraction : 1.0;
 	}
+	if (total_hf <= 0) {
+		total_hf = n;
+	}
+	double usable_h = fmax(0, col->pending.height - gap * (n - 1));
 
 	double y = 0;
-	for (int i = 0; i < col->pending.children->length; ++i) {
+	for (int i = 0; i < n; ++i) {
 		struct sway_container *child = col->pending.children->items[i];
 
+		double hf = child->height_fraction > 0 ? child->height_fraction : 1.0;
+		if (i < n - 1) {
+			child->pending.height = round(hf / total_hf * usable_h);
+		} else {
+			child->pending.height = fmax(0, col->pending.height - y);
+		}
 		child->pending.x = 0;
 		child->pending.y = y;
 		child->pending.width = col->pending.width;
@@ -136,46 +121,6 @@ void viewport_compute_offset(struct sway_workspace *ws,
 	ws->viewport_y = 0;
 }
 
-void column_scroll_vert_to(struct sway_container *col,
-		struct sway_container *win, double area_h) {
-	if (!col || col->view || !col->pending.children) {
-		return;
-	}
-	if (!win || win == col || list_find(col->pending.children, win) == -1) {
-		col->pending.scroll_y = 0;
-		node_set_dirty(&col->node);
-		return;
-	}
-	int gaps = col->pending.workspace
-		? col->pending.workspace->gaps_inner : 0;
-	double total_h = total_extent_v(col->pending.children, gaps);
-	double max_y = total_h > area_h ? total_h - area_h : 0.0;
-
-	double old_scroll_y = col->pending.scroll_y;
-	double new_scroll_y = edge_snap_vert(win->pending.y,
-		win->pending.height,
-		old_scroll_y, area_h, max_y);
-	col->pending.scroll_y = new_scroll_y;
-
-	if (col->content_tree) {
-		double from_y = col->content_tree->node.y;
-		double to_y = -new_scroll_y;
-		struct wlr_scene_anim_spec cfg = {
-			.easing = WLR_EASING_SPRING,
-			.damping_ratio = 1.0,
-			.stiffness = 1200.0,
-			.epsilon = 0.001,
-		};
-		wlr_scene_animate_position(server.animator,
-			&col->content_tree->node,
-			col->content_tree->node.x, from_y,
-			col->content_tree->node.x, to_y,
-			&cfg, NULL, NULL);
-	}
-
-	node_set_dirty(&col->node);
-}
-
 double workspace_view_remaining_width(struct sway_workspace *ws, int start_index) {
 	int gaps = ws->gaps_inner;
 	double vp = ws->viewport_x;
@@ -194,61 +139,13 @@ double workspace_view_remaining_width(struct sway_workspace *ws, int start_index
 	return ws->width;
 }
 
-double column_view_remaining_height(struct sway_container *col, int start_index) {
-	int gap = col->pending.workspace ? col->pending.workspace->gaps_inner : 0;
-	double scroll_y = col->pending.scroll_y;
-	double vp_end = scroll_y + col->pending.height;
-	int start = start_index < 0 ? col->pending.children->length - 1 : start_index;
-	for (int i = start; i >= 0; --i) {
-		struct sway_container *child = col->pending.children->items[i];
-		if (child->pending.y + child->pending.height + gap < scroll_y) {
-			break;
-		}
-		if (child->pending.y > vp_end) {
-			continue;
-		}
-		return vp_end - (child->pending.y + child->pending.height + gap);
-	}
-	return col->pending.height;
-}
-
 void handle_focus_viewport(struct sway_seat *seat,
 		struct sway_container *container) {
-	if (!container || container_is_floating(container)) {
-		return;
-	}
-	struct sway_workspace *ws = container->pending.workspace;
-	if (!ws || !ws->tiling || ws->tiling->length == 0) {
-		return;
-	}
-
-	struct sway_container *col = container;
-	while (col->pending.parent) {
-		col = col->pending.parent;
-	}
-	if (list_find(ws->tiling, col) == -1) {
-		return;
-	}
-
-	double area_h = ws->height;
-
-	// Horizontal scrolling has been removed; keep the viewport fixed.
-	ws->viewport_x = 0;
-	ws->viewport_y = 0;
-
-	// Vertical — edge-snap focused window into column viewport
-	if (col->pending.layout == L_VERT) {
-		column_scroll_vert_to(col, col != container ? container : NULL, area_h);
-	} else {
-		col->pending.scroll_y = 0;
-	}
-
-	node_set_dirty(&ws->node);
-	node_set_dirty(&col->node);
-	transaction_commit_dirty();
-}
-
-int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
+	// Vertical scrolling has been removed; columns always fit their windows,
+	// so there is nothing to scroll into view on focus.
+	(void)seat;
+	(void)container;
+}int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 		int exclude_idx, bool exclude_occupied, int *candidates,
 		int max_cand, double *out_occupied) {
 	sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible] ws=%p focus_idx=%d "
@@ -678,24 +575,9 @@ struct cmd_results *cmd_evenv(int argc, char **argv) {
 	}
 
 	int gaps = ws->gaps_inner;
-	double scroll_y = con->pending.scroll_y;
-	double vp_end = scroll_y + con->pending.height;
-
-	int *visible = malloc(con->pending.children->length * sizeof(int));
-	if (!visible) {
-		return cmd_results_new(CMD_FAILURE, "allocation failed");
-	}
-	int n = 0;
-	for (int i = 0; i < con->pending.children->length; ++i) {
-		struct sway_container *child = con->pending.children->items[i];
-		if (child->pending.y + child->pending.height > scroll_y &&
-				child->pending.y < vp_end) {
-			visible[n++] = i;
-		}
-	}
+	int n = con->pending.children->length;
 
 	if (n < 2) {
-		free(visible);
 		return cmd_results_new(CMD_SUCCESS, NULL);
 	}
 
@@ -703,11 +585,10 @@ struct cmd_results *cmd_evenv(int argc, char **argv) {
 	double new_h = usable / n;
 
 	for (int i = 0; i < n; ++i) {
-		struct sway_container *child = con->pending.children->items[visible[i]];
+		struct sway_container *child = con->pending.children->items[i];
 		window_set_height_px(child, new_h);
 		node_set_dirty(&child->node);
 	}
-	free(visible);
 
 	arrange_workspace(ws);
 	transaction_commit_dirty();

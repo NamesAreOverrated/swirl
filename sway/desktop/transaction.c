@@ -600,18 +600,6 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
         col->current.children->length > 0) {
       arrange_container(col, col->current.width, col->current.height, false,
                         ws->gaps_inner);
-      wlr_scene_node_set_position(&col->content_tree->node, 0,
-                                  -col->current.scroll_y);
-
-      // Re-clip each tiled view in the column to the workspace now that the
-      // scroll position is committed, so scrolled content cannot bleed past
-      // the workspace boundary into stacked monitors.
-      for (int j = 0; j < col->current.children->length; j++) {
-        struct sway_container *child = col->current.children->items[j];
-        if (child->view) {
-          view_clip_tiled_to_workspace(child->view);
-        }
-      }
     }
   }
 }
