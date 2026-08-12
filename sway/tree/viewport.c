@@ -93,9 +93,10 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 			col->pending.width = fmax(0, parent->width - x);
 		}
 		// Safety net: honors the view's requested minimum. No-op once the
-		// reserve-then-distribute above already respected it, and keeps
-		// width_fraction in sync so it cannot ratchet.
-		container_clamp_size(col);
+		// reserve-then-distribute above already respected it. Uses the
+		// pixel-only clamp so the arrange pass does not rewrite width_fraction
+		// (which re-mapped it via a ws->width basis and caused width jitter).
+		container_clamp_pixels(col);
 		node_set_dirty(&col->node);
 
 		if (!col->view && col->pending.children) {
@@ -174,7 +175,13 @@ void viewport_arrange_windows(struct sway_container *col) {
 		child->pending.x = col->pending.x;
 		child->pending.y = col->pending.y + y;
 		child->pending.width = col->pending.width;
-		child->height_fraction = workspace_height_to_fraction(ws, heights[i]);
+		// Do NOT re-derive height_fraction here: the stored fraction is the
+		// authoritative user-intent value (set by the vertical resize
+		// primitive) and the distribute above already honors min/max via
+		// cmin_h/cmax_h. Re-deriving from pixels mixed a reserved-min part
+		// with a distributed part using the full workspace height as the
+		// denominator, which was lossy and drifted the ratio on every arrange
+		// pass (and only cancelled out at exactly 0.5/0.5).
 		y += heights[i] + gap;
 		node_set_dirty(&child->node);
 

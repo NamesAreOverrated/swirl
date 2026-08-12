@@ -236,6 +236,13 @@ void container_get_size_constraints(struct sway_container *con,
 void container_clamp_size(struct sway_container *con);
 
 /**
+ * Clamp a container's pending geometry to its view constraints WITHOUT
+ * rewriting width/height_fraction. Used by the tiled arrange pass so the
+ * layout does not re-map the stored fractions.
+ */
+void container_clamp_pixels(struct sway_container *con);
+
+/**
  * Clamp content-space (borderless) dimensions to the view's app-requested
  * constraints in place.
  */

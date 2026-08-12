@@ -1046,6 +1046,30 @@ void container_clamp_size(struct sway_container *con) {
 }
 
 /**
+ * Clamp a container's pending geometry to its view constraints without
+ * rewriting width/height_fraction. Used by the tiled arrange pass so the
+ * layout does not re-map the user's stored fractions (which caused width
+ * jitter). The full container_clamp_size() keeps fractions in sync and remains
+ * appropriate for floating resize / view_autoconfigure.
+ */
+void container_clamp_pixels(struct sway_container *con) {
+	double min_w, max_w, min_h, max_h;
+	container_get_size_constraints(con, &min_w, &max_w, &min_h, &max_h);
+	if (min_w != DBL_MIN) {
+		con->pending.width = fmax(con->pending.width, min_w);
+	}
+	if (max_w != DBL_MAX) {
+		con->pending.width = fmin(con->pending.width, max_w);
+	}
+	if (min_h != DBL_MIN) {
+		con->pending.height = fmax(con->pending.height, min_h);
+	}
+	if (max_h != DBL_MAX) {
+		con->pending.height = fmin(con->pending.height, max_h);
+	}
+}
+
+/**
  * Clamp content-space dimensions (no borders) to the view's app-requested
  * constraints in place. Used by floating resize and as a final safety net in
  * view_autoconfigure.
