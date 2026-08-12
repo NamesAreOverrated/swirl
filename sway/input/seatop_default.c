@@ -6,6 +6,7 @@
 #include <wlr/types/wlr_xcursor_manager.h>
 #include "gesture.h"
 #include "sway/desktop/transaction.h"
+#include "sway/desktop/overview.h"
 #include "sway/input/cursor.h"
 #include "sway/input/seat.h"
 #include "sway/input/tablet.h"
@@ -340,6 +341,12 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 		enum wl_pointer_button_state state) {
 	struct sway_cursor *cursor = seat->cursor;
 
+	if (overview_is_active()) {
+		overview_handle_button(seat, button,
+				state == WL_POINTER_BUTTON_STATE_PRESSED);
+		return;
+	}
+
 	// Determine what's under the cursor
 	struct wlr_surface *surface = NULL;
 	double sx, sy;
@@ -610,6 +617,11 @@ static void check_focus_follows_mouse(struct sway_seat *seat,
 static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 	struct seatop_default_event *e = seat->seatop_data;
 	struct sway_cursor *cursor = seat->cursor;
+
+	if (overview_is_active()) {
+		overview_handle_motion(seat);
+		return;
+	}
 
 	struct wlr_surface *surface = NULL;
 	double sx, sy;

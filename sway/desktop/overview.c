@@ -3,6 +3,7 @@
 #include "log.h"
 #include "sway/config.h"
 #include "sway/desktop/transaction.h"
+#include "sway/input/cursor.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
 #include "sway/scene_descriptor.h"
@@ -13,6 +14,7 @@
 #include "sway/tree/workspace.h"
 #include <cairo.h>
 #include <drm_fourcc.h>
+#include <linux/input-event-codes.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -24,6 +26,7 @@
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_scene.h>
 
@@ -41,6 +44,7 @@ static bool overview_active = false;
 
 static struct {
   struct wlr_scene_rect *bg;
+  struct wlr_scene_rect *hover_rect;
   struct wl_list thumbnails;
   int n_thumbnails;
   int digit_buf;
@@ -335,6 +339,60 @@ static void overview_action_restore(struct overview_thumbnail *t) {
   transaction_commit_dirty();
 }
 
+static struct overview_thumbnail *overview_thumbnail_at(double x, double y) {
+  struct overview_thumbnail *t;
+  wl_list_for_each(t, &state.thumbnails, link) {
+    if (!t->sb)
+      continue;
+    int tx, ty;
+    wlr_scene_node_coords(&t->sb->node, &tx, &ty);
+    int dw = t->sb->dst_width;
+    int dh = t->sb->dst_height;
+    if (x >= tx && x <= tx + dw && y >= ty && y <= ty + dh)
+      return t;
+  }
+  return NULL;
+}
+
+void overview_handle_button(struct sway_seat *seat, uint32_t button,
+    bool pressed) {
+  if (!pressed)
+    return;
+  if (button == BTN_RIGHT) {
+    overview_toggle();
+    return;
+  }
+  if (button != BTN_LEFT)
+    return;
+  double cx = seat->cursor->cursor->x;
+  double cy = seat->cursor->cursor->y;
+  struct overview_thumbnail *t = overview_thumbnail_at(cx, cy);
+  if (t) {
+    overview_action_restore(t);
+    overview_toggle();
+  }
+}
+
+void overview_handle_motion(struct sway_seat *seat) {
+  if (!overview_is_active() || !state.hover_rect)
+    return;
+  double cx = seat->cursor->cursor->x;
+  double cy = seat->cursor->cursor->y;
+  struct overview_thumbnail *t = overview_thumbnail_at(cx, cy);
+  if (t) {
+    int tx, ty;
+    wlr_scene_node_coords(&t->sb->node, &tx, &ty);
+    int dw = t->sb->dst_width;
+    int dh = t->sb->dst_height;
+    int pad = 4;
+    wlr_scene_rect_set_size(state.hover_rect, dw + 2 * pad, dh + 2 * pad);
+    wlr_scene_node_set_position(&state.hover_rect->node, tx - pad, ty - pad);
+    wlr_scene_node_set_enabled(&state.hover_rect->node, true);
+  } else {
+    wlr_scene_node_set_enabled(&state.hover_rect->node, false);
+  }
+}
+
 bool overview_handle_key(xkb_keysym_t sym) {
   if (!overview_active)
     return false;
@@ -599,6 +657,10 @@ static void overview_teardown(void) {
     wlr_scene_node_destroy(&state.bg->node);
     state.bg = NULL;
   }
+  if (state.hover_rect) {
+    wlr_scene_node_destroy(&state.hover_rect->node);
+    state.hover_rect = NULL;
+  }
   wlr_scene_node_set_enabled(&root->layers.overview->node, false);
   overview_active = false;
 }
@@ -616,9 +678,17 @@ static bool overview_setup(struct sway_output *output) {
   int oy = (int)(output->scene_output->y);
 
   state.bg = wlr_scene_rect_create(root->layers.overview, ow, oh,
-                                   (float[4]){0.0, 0.0, 0.0, 0.6});
+                                    (float[4]){0.0, 0.0, 0.0, 0.6});
   if (state.bg) {
     wlr_scene_node_set_position(&state.bg->node, ox, oy);
+  }
+
+  // Highlight ring shown behind the hovered thumbnail (created before the
+  // thumbnails so it sits beneath them and reads as a border outline).
+  state.hover_rect = wlr_scene_rect_create(root->layers.overview, 0, 0,
+      config->border_colors.focused.border);
+  if (state.hover_rect) {
+    wlr_scene_node_set_enabled(&state.hover_rect->node, false);
   }
 
   wl_list_init(&state.thumbnails);

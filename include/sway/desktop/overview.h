@@ -18,9 +18,15 @@ enum overview_action {
 };
 
 bool overview_is_active(void);
+
+struct sway_seat;
+
 void overview_set_params(enum overview_scope scope,
 		enum overview_action action);
 void overview_toggle(void);
 bool overview_handle_key(xkb_keysym_t sym);
+void overview_handle_button(struct sway_seat *seat, uint32_t button,
+		bool pressed);
+void overview_handle_motion(struct sway_seat *seat);
 
 #endif
