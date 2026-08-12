@@ -582,8 +582,12 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
   for (int i = 0; i < ws->current.tiling->length; i++) {
     struct sway_container *col = ws->current.tiling->items[i];
 
-    wlr_scene_node_set_position(&col->scene_tree->node, col->current.x,
-                                col->current.y);
+    // Column pending/current coordinates are output-global; the workspace
+    // tiling layer already sits at the tiling origin (gaps + usable area),
+    // so translate the column to a position relative to that layer.
+    wlr_scene_node_set_position(&col->scene_tree->node,
+                                col->current.x - ws->x,
+                                col->current.y - ws->y);
     wlr_scene_node_reparent(&col->scene_tree->node, ws->layers.tiling);
     // Raising each column in list order restores the same scene order anyway,
     // but every raise after the first reorders the node and re-damages its

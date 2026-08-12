@@ -139,8 +139,7 @@ static void split_border(double pos, int offset, int len, int n_children,
 }
 
 static bool split_titlebar(struct sway_node *node, struct sway_container *avoid,
-		struct wlr_cursor *cursor, struct wlr_box *title_box, bool *after,
-		double off_x, double off_y, double tiling_off_x, double tiling_off_y) {
+		struct wlr_cursor *cursor, struct wlr_box *title_box, bool *after) {
 	struct sway_container *con = node->sway_container;
 	struct sway_node *parent = con->pending.parent ?
 		&con->pending.parent->node : NULL;
@@ -157,20 +156,6 @@ static bool split_titlebar(struct sway_node *node, struct sway_container *avoid,
 		node_get_box(node, &box);
 		n_children = 1;
 		avoid_index = -1;
-	}
-	// Container boxes are in tiling-layer space; convert to screen so they
-	// can be compared to the (global) cursor position. A box owned by a
-	// top-level container is tiling-layer-relative (add tiling_off); a box
-	// inside a column is column-relative (add the full off, which also
-	// accounts for the column offset and scroll).
-	struct sway_container *box_owner =
-		(layout == L_TABBED || layout == L_STACKED) ? con->pending.parent : con;
-	if (box_owner && box_owner->pending.parent) {
-		box.x += off_x;
-		box.y += off_y;
-	} else {
-		box.x += tiling_off_x;
-		box.y += tiling_off_y;
 	}
 	if (layout == L_STACKED && cursor->y < box.y + title_height * n_children) {
 		// Drop into stacked titlebars.
@@ -235,25 +220,11 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		return;
 	}
 
-	// Compute layout→screen offset for this container.
-	// Used to convert pending coords into screen space for edge detection
-	// and indicator positioning (accounts for viewport + column).
-	double off_x = 0, off_y = 0;
-	double tiling_off_x = 0, tiling_off_y = 0;
-	struct sway_workspace *ws = con->pending.workspace;
-	if (ws && ws->output) {
-		tiling_off_x = ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x;
-		tiling_off_y = ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y;
-		struct sway_container *col = container_toplevel_ancestor(con);
-		double col_px = (col && !col->view) ? col->pending.x : 0;
-		double col_py = (col && !col->view) ? col->pending.y : 0;
-		off_x = tiling_off_x + col_px;
-		off_y = tiling_off_y + col_py;
-	}
-
+	// Container pending coordinates are already output-global (see the column
+	// layout), so they can be compared to the cursor position directly.
 	struct wlr_box drop_box = {
-		.x = con->pending.content_x + off_x,
-		.y = con->pending.content_y + off_y,
+		.x = con->pending.content_x,
+		.y = con->pending.content_y,
 		.width = con->pending.content_width,
 		.height = con->pending.content_height,
 	};
@@ -262,8 +233,7 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	// container is not a descendant of the source container.
 	if (!surface && !container_has_ancestor(con, e->con) &&
 			split_titlebar(node, e->con, cursor->cursor,
-				&drop_box, &e->insert_after_target,
-				off_x, off_y, tiling_off_x, tiling_off_y)) {
+				&drop_box, &e->insert_after_target)) {
 		sway_log(SWAY_DEBUG, "DRAG: titlebar drop split_target=%d", con == e->con);
 		if (con == e->con) {
 			set_target_node(e, NULL);
@@ -278,15 +248,15 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 
 	// Traverse the ancestors, trying to find a layout container perpendicular
 	// to the edge. Eg. close to the top or bottom of a horiz layout.
-	int thresh_top = con->pending.content_y + DROP_LAYOUT_BORDER + off_y;
+	int thresh_top = con->pending.content_y + DROP_LAYOUT_BORDER;
 	int thresh_bottom = con->pending.content_y +
-		con->pending.content_height - DROP_LAYOUT_BORDER + off_y;
-	int thresh_left = con->pending.content_x + DROP_LAYOUT_BORDER + off_x;
+		con->pending.content_height - DROP_LAYOUT_BORDER;
+	int thresh_left = con->pending.content_x + DROP_LAYOUT_BORDER;
 	int thresh_right = con->pending.content_x +
-		con->pending.content_width - DROP_LAYOUT_BORDER + off_x;
-	sway_log(SWAY_DEBUG, "DRAG: thresh t=%d b=%d l=%d r=%d cur=(%.0f,%.0f) off=(%.0f,%.0f)",
+		con->pending.content_width - DROP_LAYOUT_BORDER;
+	sway_log(SWAY_DEBUG, "DRAG: thresh t=%d b=%d l=%d r=%d cur=(%.0f,%.0f)",
 		thresh_top, thresh_bottom, thresh_left, thresh_right,
-		cursor->cursor->x, cursor->cursor->y, off_x, off_y);
+		cursor->cursor->x, cursor->cursor->y);
 	while (con) {
 		enum wlr_edges edge = WLR_EDGE_NONE;
 		enum sway_container_layout layout = container_parent_layout(con);
@@ -294,11 +264,6 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 			(void*)con, !!con->view, layout);
 		struct wlr_box box;
 		node_get_box(node_get_parent(&con->node), &box);
-		// Container boxes (e.g. column) are in tiling-layer space; convert to screen.
-		if (ws && ws->output && node_get_parent(&con->node)->type == N_CONTAINER) {
-			box.x += ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x;
-			box.y += ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y;
-		}
 		if (layout == L_HORIZ || layout == L_TABBED) {
 			if (cursor->cursor->y < thresh_top) {
 				edge = WLR_EDGE_TOP;
@@ -356,12 +321,12 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		return;
 	}
 
-	// Find the closest edge (pending coords converted to screen via off_x/off_y)
+	// Find the closest edge (pending coords are already output-global)
 	size_t thickness = fmin(con->pending.content_width, con->pending.content_height) * 0.3;
 	size_t closest_dist = INT_MAX;
 	size_t dist;
-	double con_sx = con->pending.x + off_x;
-	double con_sy = con->pending.y + off_y;
+	double con_sx = con->pending.x;
+	double con_sy = con->pending.y;
 	e->target_edge = WLR_EDGE_NONE;
 	if ((dist = cursor->cursor->y - con_sy) < closest_dist) {
 		closest_dist = dist;

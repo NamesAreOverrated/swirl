@@ -18,6 +18,14 @@
 #include "sway/commands.h"
 #include "sway/tree/column.h"
 
+// Column pending.x is output-global (see workspace_arrange_columns), but the
+// visibility/fit math below uses tile-local positions (columns start at the
+// workspace origin). Convert a column's position to tile-local coordinates.
+static double col_local_x(struct sway_workspace *ws,
+		const struct sway_container *col) {
+	return col->pending.x - ws->x;
+}
+
 void workspace_arrange_columns(struct sway_workspace *ws,
 		struct wlr_box *parent) {
 	if (!ws->tiling || ws->tiling->length == 0) {
@@ -41,13 +49,20 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	}
 	double child_total_width = fmax(0, parent->width - gaps * (n - 1));
 
+	// Containers are placed at their on-screen (output-global) position:
+	// ws->x/y is the tiling origin (already includes outer gaps), so column
+	// coordinates start there and every consumer (xwayland geometry, input
+	// mapping, ipc, focus/warp math) can take pending coords at face value.
+	double origin_x = ws->x;
+	double origin_y = ws->y;
+
 	double x = 0;
 	for (int i = 0; i < n; ++i) {
 		struct sway_container *col = ws->tiling->items[i];
 
 		double frac = col->width_fraction > 0 ? col->width_fraction : 1.0;
-		col->pending.x = x;
-		col->pending.y = 0;
+		col->pending.x = origin_x + x;
+		col->pending.y = origin_y;
 		col->pending.height = usable_h;
 		if (i < n - 1) {
 			col->pending.width = round(frac / total_frac * child_total_width);
@@ -100,8 +115,8 @@ void viewport_arrange_windows(struct sway_container *col) {
 		} else {
 			child->pending.height = fmax(0, col->pending.height - y);
 		}
-		child->pending.x = 0;
-		child->pending.y = y;
+		child->pending.x = col->pending.x;
+		child->pending.y = col->pending.y + y;
 		child->pending.width = col->pending.width;
 		y += child->pending.height + gap;
 		node_set_dirty(&child->node);
@@ -128,13 +143,14 @@ double workspace_view_remaining_width(struct sway_workspace *ws, int start_index
 	int start = start_index < 0 ? ws->tiling->length - 1 : start_index;
 	for (int i = start; i >= 0; --i) {
 		struct sway_container *col = ws->tiling->items[i];
-		if (col->pending.x + col->pending.width + gaps < vp) {
+		double col_x = col_local_x(ws, col);
+		if (col_x + col->pending.width + gaps < vp) {
 			break;
 		}
-		if (col->pending.x > vp_end) {
+		if (col_x > vp_end) {
 			continue;
 		}
-		return vp_end - (col->pending.x + col->pending.width + gaps);
+		return vp_end - (col_x + col->pending.width + gaps);
 	}
 	return ws->width;
 }
@@ -155,9 +171,10 @@ void handle_focus_viewport(struct sway_seat *seat,
 
 	for (int i = 0; i < ws->tiling->length; i++) {
 		struct sway_container *c = ws->tiling->items[i];
-		double x_end = c->pending.x + c->pending.width;
+		double col_x = col_local_x(ws, c);
+		double x_end = col_x + c->pending.width;
 		double vp_end = ws->viewport_x + ws->width;
-		bool vis = c->pending.x >= ws->viewport_x - 0.5
+		bool vis = col_x >= ws->viewport_x - 0.5
 			&& x_end <= vp_end + 0.5;
 		sway_log(SWAY_DEBUG, "[FLOAT | viewport_scan_visible]   col[%d]: %p "
 			"x=%.1f w=%.1f x_end=%.1f vp_end=%.1f vis=%d",
@@ -256,10 +273,11 @@ void handle_focus_viewport(struct sway_seat *seat,
 
 bool viewport_column_is_visible(struct sway_workspace *ws, int col_idx) {
 	struct sway_container *c = ws->tiling->items[col_idx];
+	double col_x = col_local_x(ws, c);
 	double vp = ws->viewport_x;
 	double vp_end = vp + ws->width;
-	return c->pending.x >= vp - 0.5
-		&& c->pending.x + c->pending.width <= vp_end + 0.5;
+	return col_x >= vp - 0.5
+		&& col_x + c->pending.width <= vp_end + 0.5;
 }
 
 void viewport_absorb_farthest(struct sway_workspace *ws,
@@ -530,8 +548,9 @@ struct cmd_results *cmd_evenh(int argc, char **argv) {
 	int n = 0;
 	for (int i = 0; i < ws->tiling->length; ++i) {
 		struct sway_container *c = ws->tiling->items[i];
-		if (c->pending.x + c->pending.width > vp - 0.5 &&
-				c->pending.x < vp_end + 0.5) {
+		double col_x = col_local_x(ws, c);
+		if (col_x + c->pending.width > vp - 0.5 &&
+				col_x < vp_end + 0.5) {
 			visible[n++] = i;
 		}
 	}

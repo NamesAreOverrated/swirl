@@ -1176,7 +1176,7 @@ void container_set_floating(struct sway_container *container, bool enable) {
     double rel_x = container->pending.x - workspace->x;
     for (int i = 0; i < workspace->tiling->length; i++) {
       struct sway_container *c = workspace->tiling->items[i];
-      if (rel_x < c->pending.x) {
+      if (rel_x < c->pending.x - workspace->x) {
         idx = i;
         break;
       }
