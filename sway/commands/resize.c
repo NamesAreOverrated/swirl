@@ -74,7 +74,11 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		return;
 	}
 
-	double min_col_w = workspace_width_fraction(ws, config->min_column_width_fraction);
+	double cfg_min_px = workspace_width_fraction(ws,
+			config->min_column_width_fraction);
+	double cmin_w, cmax_w, cmin_h, cmax_h;
+	container_get_size_constraints(col, &cmin_w, &cmax_w, &cmin_h, &cmax_h);
+	double min_col_w = fmax(cmin_w, cfg_min_px);
 
 	sway_log(SWAY_DEBUG, "[resize] con=%p col=%p col_idx=%d col_x=%.0f col_w=%.0f ws_width=%d vp_x=%.0f",
 		con, col, container_sibling_index(col),
@@ -204,13 +208,19 @@ void tiled_resize_vertical_px(struct sway_container *con, uint32_t edge,
     }
   }
 
-  double new_h = fmax(MIN_SANE_H, con->pending.height + delta_px);
+  double cmin_w, cmax_w, cmin_h, cmax_h;
+  container_get_size_constraints(con, &cmin_w, &cmax_w, &cmin_h, &cmax_h);
+  double con_min_h = (cmin_h != DBL_MIN) ? cmin_h : MIN_SANE_H;
+  double new_h = fmax(con_min_h, con->pending.height + delta_px);
   con->pending.height = new_h;
   con->height_fraction = workspace_height_to_fraction(ws, new_h);
   node_set_dirty(&con->node);
 
   if (sib) {
-    double new_sh = fmax(MIN_SANE_H, sib->pending.height - delta_px);
+    double smin_w, smax_w, smin_h, smax_h;
+    container_get_size_constraints(sib, &smin_w, &smax_w, &smin_h, &smax_h);
+    double sib_min_h = (smin_h != DBL_MIN) ? smin_h : MIN_SANE_H;
+    double new_sh = fmax(sib_min_h, sib->pending.height - delta_px);
     sib->pending.height = new_sh;
     sib->height_fraction = workspace_height_to_fraction(ws, new_sh);
   }

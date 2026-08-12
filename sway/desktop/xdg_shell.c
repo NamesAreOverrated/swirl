@@ -319,6 +319,24 @@ static void handle_commit(struct wl_listener *listener, void *data) {
 		return;
 	}
 
+	// xdg-shell has no event for min/max size changes, so detect them here by
+	// diffing the committed toplevel state against our cached values. When the
+	// constraints change, re-layout and reconcile overflow.
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] xdg handle_commit diff view=%p toplevel=%p", view, view ? view->wlr_xdg_toplevel : NULL);
+	struct wlr_xdg_toplevel *toplevel = view->wlr_xdg_toplevel;
+	double cmin_w = toplevel->current.min_width;
+	double cmax_w = toplevel->current.max_width;
+	double cmin_h = toplevel->current.min_height;
+	double cmax_h = toplevel->current.max_height;
+	if (cmin_w != view->cached_min_w || cmax_w != view->cached_max_w ||
+			cmin_h != view->cached_min_h || cmax_h != view->cached_max_h) {
+		view->cached_min_w = cmin_w;
+		view->cached_max_w = cmax_w;
+		view->cached_min_h = cmin_h;
+		view->cached_max_h = cmax_h;
+		view_on_constraints_changed(view);
+	}
+
 	struct wlr_box *new_geo = &xdg_surface->geometry;
 	bool new_size = new_geo->width != view->geometry.width ||
 			new_geo->height != view->geometry.height ||

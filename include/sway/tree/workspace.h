@@ -157,6 +157,14 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 void workspace_swap_columns(struct sway_container *a, struct sway_container *b);
 void workspace_fit_new_column(struct sway_workspace *ws,
 		struct sway_container *col, int idx);
+/**
+ * Merges overflowing columns to keep every column at or above its view's
+ * minimum width. When the sum of all columns' minimum widths (plus inner gaps)
+ * exceeds the workspace, the rightmost column is merged into a neighbor using
+ * the rule: right neighbor -> column left-of-left -> immediate-left. Called
+ * after placing a new window and whenever a view's size constraints change.
+ */
+void workspace_fix_overflow(struct sway_workspace *ws);
 void workspace_pull_column(struct sway_workspace *ws,
 		struct sway_container *col, int insert_idx);
 int workspace_even_freed(struct sway_workspace *ws,

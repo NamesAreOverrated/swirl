@@ -123,6 +123,12 @@ struct sway_view {
 
 	int max_render_time; // In milliseconds
 
+	// Cached size constraints, used to detect changes that require a
+	// re-layout (see view_on_constraints_changed). Holds the last-known
+	// min/max reported by the client.
+	double cached_min_w, cached_max_w, cached_min_h, cached_max_h;
+	bool constraints_cached;
+
 	enum seat_config_shortcuts_inhibit shortcuts_inhibit;
 
 	enum sway_view_tearing_mode tearing_mode;
@@ -169,6 +175,7 @@ struct sway_xwayland_view {
 	struct wl_listener set_startup_id;
 	struct wl_listener set_window_type;
 	struct wl_listener set_hints;
+	struct wl_listener set_size_hints;
 	struct wl_listener set_decorations;
 	struct wl_listener associate;
 	struct wl_listener dissociate;
@@ -369,6 +376,13 @@ void view_assign_ctx(struct sway_view *view, struct launcher_ctx *ctx);
 void view_send_frame_done(struct sway_view *view);
 
 bool view_can_tear(struct sway_view *view);
+
+/**
+ * Called when a view's size constraints (min/max) change. Re-lays out the
+ * view's workspace and merges any overflowing columns so a window that grows
+ * its minimum size is never cropped. Safe to call from commit/signal handlers.
+ */
+void view_on_constraints_changed(struct sway_view *view);
 
 void xdg_toplevel_tag_manager_v1_handle_set_tag(struct wl_listener *listener, void *data);
 

@@ -23,6 +23,7 @@
 #include "sway/tree/view.h"
 #include "sway/tree/viewport.h"
 #include "sway/tree/workspace.h"
+#include "sway/commands.h"
 #include "list.h"
 #include "util.h"
 
@@ -954,13 +955,35 @@ struct sway_container *workspace_create_new_column(struct sway_workspace *ws,
 	col->pending.workspace = ws;
 	container_add_child(col, view);
 
+	// Account for the new view's own size constraints when sizing the column,
+	// so a window that advertises a minimum (or maximum) size never opens
+	// cropped. The arrangement pass will re-apply the same clamp later.
+	double cmin_w, cmax_w, cmin_h, cmax_h;
+	container_get_size_constraints(col, &cmin_w, &cmax_w, &cmin_h, &cmax_h);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] create_new_column constraints cmin_w=%.0f cmax_w=%.0f cmin_h=%.0f cmax_h=%.0f", cmin_w, cmax_w, cmin_h, cmax_h);
+	double cfg_min_px = workspace_width_fraction(ws,
+		config->min_column_width_fraction);
+
 	if (width_px < 0) {
 		width_px = ws->width;
 	}
+	double floor_w = fmax(cfg_min_px, cmin_w != DBL_MIN ? cmin_w : 0);
+	if (cmax_w != DBL_MAX) {
+		width_px = fmin(width_px, cmax_w);
+	}
+	width_px = fmax(width_px, floor_w);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] create_new_column before set_width width_px=%.0f", width_px);
 	column_set_width_px(col, width_px);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] create_new_column after set_width view_h=%.0f", height_px);
 
 	if (height_px < 0) {
 		height_px = ws->height;
+		if (cmin_h != DBL_MIN) {
+			height_px = fmax(height_px, cmin_h);
+		}
+		if (cmax_h != DBL_MAX) {
+			height_px = fmin(height_px, cmax_h);
+		}
 		view->height_fraction = 1.0;
 	} else {
 		double uh = ws->height - ws->current_gaps.top - ws->current_gaps.bottom;
@@ -979,11 +1002,12 @@ struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
 	return workspace_create_new_column(ws, view, rem_w, -1);
 }
 
-struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
+	struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		struct sway_container *con) {
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_add_tiling] con=%p "
+	sway_log(SWAY_DEBUG, "[TILE | workspace_add_tiling] con=%p "
 		"was_view=%d tiling_len=%d", con, !!con->view,
 		workspace->tiling->length);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] workspace_add_tiling enter con=%p was_view=%d", (void*)con, !!con->view);
 	if (con->pending.workspace) {
 		struct sway_container *old_parent = con->pending.parent;
 		container_detach(con);
@@ -993,38 +1017,41 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 	}
 
 	bool was_view = con->view;
+	struct sway_view *new_view = was_view ? con->view : NULL;
 
-	if (con->view) {
-		con = workspace_create_new_column_at(workspace, con, -1);
-	} else if (con->pending.workspace != workspace) {
-		container_detach(con);
-	}
-
-	// Insert after the focused column
+	// New windows always open as a fresh column placed to the right of the
+	// focused task. Overflow is resolved afterwards by workspace_fix_overflow(),
+	// which merges columns once every view's size constraints are known
+	// (including late XWayland/xdg min/max updates). This keeps the open-time
+	// decision independent of possibly-stale constraints.
 	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_node *node = seat_get_focus_inactive(seat, &workspace->node);
-	int idx = workspace->tiling->length;
+	int focus_idx = workspace->tiling->length;
 	if (node && node->type == N_CONTAINER
 			&& !container_is_floating_or_child(node->sway_container)) {
 		struct sway_container *focus_col =
 			container_toplevel_ancestor(node->sway_container);
 		int found = list_find(workspace->tiling, focus_col);
 		if (found >= 0) {
-			idx = found + 1;
+			focus_idx = found;
 		}
 	}
 
-	// Fit new column at default width within the viewport
-	if (was_view && workspace->tiling->length > 0) {
-		workspace_fit_new_column(workspace, con, idx);
+	// Wrap the container in a new column (also handles moved columns).
+	con = workspace_create_new_column_at(workspace, con, -1);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] add_tiling after create_new_column con=%p", (void*)con);
+
+	// Insert after the focused column.
+	int idx = workspace->tiling->length;
+	if (focus_idx >= 0 && focus_idx < workspace->tiling->length) {
+		idx = focus_idx + 1;
 	}
 
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_add_tiling] "
+	sway_log(SWAY_DEBUG, "[TILE | workspace_add_tiling] "
 		"before insert: idx=%d tiling_len=%d", idx,
 		workspace->tiling->length);
 	list_insert(workspace->tiling, idx, con);
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_add_tiling] "
-		"after insert: tiling_len=%d", workspace->tiling->length);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] add_tiling after insert con=%p idx=%d tiling_len=%d", (void*)con, idx, workspace->tiling->length);
 
 	con->pending.workspace = workspace;
 	container_for_each_child(con, set_workspace, NULL);
@@ -1032,7 +1059,137 @@ struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 	workspace_update_representation(workspace);
 	node_set_dirty(&workspace->node);
 	node_set_dirty(&con->node);
+
+	// Fit the new column at the default width, respecting the view's
+	// requested minimum. Must run AFTER the column is in ws->tiling so the
+	// focus/visibility scan sees a non-empty tiling list (otherwise the focus
+	// index collapses to -1 and dereferences ws->tiling->items[-1]).
+	if (was_view) {
+		workspace_fit_new_column(workspace, con, idx);
+	}
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] add_tiling after fit_new_column con=%p", (void*)con);
+
+	// Resolve any overflow the new column introduced.
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] add_tiling BEFORE workspace_fix_overflow con=%p", (void*)con);
+	workspace_fix_overflow(workspace);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] add_tiling AFTER workspace_fix_overflow con=%p in_tiling=%d", (void*)con, list_find(workspace->tiling, con) >= 0);
+
+	// Return the container the view actually ended up in: workspace_fix_overflow
+	// may have merged/destroyed the freshly created column, so for a view we
+	// return its live column. For a moved column that got merged away, fall
+	// back to a surviving column instead of returning a dangling pointer.
+	if (was_view && new_view) {
+		return new_view->container;
+	}
+	if (list_find(workspace->tiling, con) < 0) {
+		return workspace->tiling->length > 0
+			? workspace->tiling->items[0] : NULL;
+	}
 	return con;
+}
+
+void workspace_fix_overflow(struct sway_workspace *ws) {
+	if (!ws || ws->width <= 0) {
+		return;
+	}
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] fix_overflow enter ws=%p ws->width=%d tiling_len=%d", ws, ws->width, ws->tiling->length);
+	double cfg_min_px = workspace_width_fraction(ws,
+			config->min_column_width_fraction);
+	int gaps = ws->gaps_inner;
+
+	for (;;) {
+		int n = ws->tiling->length;
+		sway_log(SWAY_DEBUG, "[CRASHTRACE] fix_overflow loop top n=%d", n);
+		if (n <= 1) {
+			break;
+		}
+		// Does the sum of every column's minimum width (plus inner gaps)
+		// exceed the workspace? If so, merging is required.
+		double total_min = 0;
+		for (int i = 0; i < n; ++i) {
+			struct sway_container *c = ws->tiling->items[i];
+			double cm_w, cmax_w, cm_h, cmax_h;
+			container_get_size_constraints(c, &cm_w, &cmax_w,
+				&cm_h, &cmax_h);
+			total_min += fmax(cm_w, cfg_min_px);
+		}
+		total_min += gaps * (n - 1);
+		sway_log(SWAY_DEBUG, "[CRASHTRACE] fix_overflow total_min=%.0f ws->width=%d", total_min, ws->width);
+		if (total_min <= ws->width + 0.5) {
+			break;
+		}
+
+		// Merge the rightmost overflowing column into a neighbor, using the
+		// rule: right neighbor -> column left-of-left -> immediate-left.
+		int i = n - 1;
+		int tgt = -1;
+		if (i + 1 < n) {
+			tgt = i + 1;
+		} else if (i - 2 >= 0) {
+			tgt = i - 2;
+		} else if (i - 1 >= 0) {
+			tgt = i - 1;
+		} else {
+			break;
+		}
+
+		struct sway_container *src = ws->tiling->items[i];
+		struct sway_container *dst = ws->tiling->items[tgt];
+		sway_log(SWAY_DEBUG, "[fix-overflow] merging col %d into col %d "
+			"(n=%d total_min=%.0f ws->width=%d)", i, tgt, n,
+			total_min, ws->width);
+
+		// Reparent src's view(s) into dst (flatten/stack).
+		if (src->view) {
+			container_add_child(dst, src);
+		} else if (src->pending.children) {
+			int m = src->pending.children->length;
+			if (m > 0) {
+				struct sway_container **kids =
+					malloc(sizeof(struct sway_container *) * m);
+				for (int k = 0; k < m; ++k) {
+					kids[k] = src->pending.children->items[k];
+				}
+				for (int k = 0; k < m; ++k) {
+					container_add_child(dst, kids[k]);
+				}
+				free(kids);
+			}
+		}
+
+		// A vertical stack that can no longer fit its (now taller) children
+		// should switch to tabbed so they share the full column size.
+		if (dst->pending.layout == L_VERT && dst->pending.children
+				&& dst->pending.children->length > 0) {
+			double col_h = dst->pending.height > 0
+				? dst->pending.height : ws->height;
+			double sum_min_h = 0;
+			int mm = dst->pending.children->length;
+			for (int k = 0; k < mm; ++k) {
+				struct sway_container *ch =
+					dst->pending.children->items[k];
+				double hmin_w, hmax_w, hmin_h, hmax_h;
+				container_get_size_constraints(ch, &hmin_w, &hmax_w,
+					&hmin_h, &hmax_h);
+				sum_min_h += (hmin_h != DBL_MIN) ? hmin_h : 0;
+			}
+			if (sum_min_h + gaps * (mm - 1) > col_h + 0.5) {
+				dst->pending.layout = L_TABBED;
+			}
+		}
+
+		sway_log(SWAY_DEBUG, "[CRASHTRACE] fix_overflow before begin_destroy src=%p", (void*)src);
+		container_begin_destroy(src);
+		sway_log(SWAY_DEBUG, "[CRASHTRACE] fix_overflow after begin_destroy");
+	}
+
+	// Always re-arrange so the clamp re-applies with current constraints
+	// (even when no merge was needed, e.g. a single late-arriving min size).
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] fix_overflow before arrange_workspace");
+	arrange_workspace(ws);
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] fix_overflow after arrange_workspace");
+	workspace_update_representation(ws);
+	node_set_dirty(&ws->node);
 }
 
 void workspace_add_floating(struct sway_workspace *workspace,
@@ -1489,15 +1646,21 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 
 void workspace_fit_new_column(struct sway_workspace *ws,
 		struct sway_container *col, int idx) {
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] fit_new_column enter ws=%p col=%p idx=%d tiling_len=%d", ws, col, idx, ws->tiling->length);
 	double default_w = workspace_width_fraction(ws,
 		config->default_column_width_fraction);
 	double min_w = workspace_width_fraction(ws,
 		config->min_column_width_fraction);
+	// Respect the new column's requested minimum size too.
+	double cmin_w, cmax_w, cmin_h, cmax_h;
+	container_get_size_constraints(col, &cmin_w, &cmax_w, &cmin_h, &cmax_h);
+	default_w = fmax(default_w, cmin_w);
+	min_w = fmax(min_w, cmin_w);
 	int focus_idx = ws->focused_column_idx >= 0
 		? ws->focused_column_idx : idx - 1;
 	if (focus_idx < 0) focus_idx = 0;
 	if (focus_idx >= ws->tiling->length)
-		focus_idx = ws->tiling->length - 1;
+		focus_idx = ws->tiling->length > 0 ? ws->tiling->length - 1 : 0;
 
 	if (!viewport_column_is_visible(ws, focus_idx)) {
 		int orig = focus_idx;
@@ -1561,6 +1724,7 @@ void workspace_fit_new_column(struct sway_workspace *ws,
 		}
 	}
 
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] fit_new_column before set_width target_w=%.0f", target_w);
 	column_set_width_px(col, target_w);
 	sway_log(SWAY_DEBUG, "[fit-column] col width set to %.0f", target_w);
 }

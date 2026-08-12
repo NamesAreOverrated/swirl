@@ -519,6 +519,7 @@ static void handle_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&xwayland_view->set_startup_id.link);
 	wl_list_remove(&xwayland_view->set_window_type.link);
 	wl_list_remove(&xwayland_view->set_hints.link);
+	wl_list_remove(&xwayland_view->set_size_hints.link);
 	wl_list_remove(&xwayland_view->set_decorations.link);
 	wl_list_remove(&xwayland_view->associate.link);
 	wl_list_remove(&xwayland_view->dissociate.link);
@@ -819,6 +820,19 @@ static void handle_set_hints(struct wl_listener *listener, void *data) {
 	}
 }
 
+static void handle_set_size_hints(struct wl_listener *listener, void *data) {
+	struct sway_xwayland_view *xwayland_view =
+		wl_container_of(listener, xwayland_view, set_size_hints);
+	struct sway_view *view = &xwayland_view->view;
+	struct wlr_xwayland_surface *xsurface = view->wlr_xwayland_surface;
+	if (xsurface->surface == NULL || !xsurface->surface->mapped) {
+		return;
+	}
+	// The client updated its WM_NORMAL_HINTS (min/max size). Re-layout the
+	// workspace and reconcile any overflow so the window is never cropped.
+	view_on_constraints_changed(view);
+}
+
 static void handle_associate(struct wl_listener *listener, void *data) {
 	struct sway_xwayland_view *xwayland_view =
 		wl_container_of(listener, xwayland_view, associate);
@@ -904,6 +918,10 @@ struct sway_xwayland_view *create_xwayland_view(struct wlr_xwayland_surface *xsu
 
 	wl_signal_add(&xsurface->events.set_hints, &xwayland_view->set_hints);
 	xwayland_view->set_hints.notify = handle_set_hints;
+
+	wl_signal_add(&xsurface->events.set_size_hints,
+			&xwayland_view->set_size_hints);
+	xwayland_view->set_size_hints.notify = handle_set_size_hints;
 
 	wl_signal_add(&xsurface->events.set_decorations,
 			&xwayland_view->set_decorations);

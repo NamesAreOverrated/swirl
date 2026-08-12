@@ -278,6 +278,25 @@ void view_get_constraints(struct sway_view *view, double *min_width,
 	}
 }
 
+void view_on_constraints_changed(struct sway_view *view) {
+	sway_log(SWAY_DEBUG, "[CRASHTRACE] view_on_constraints_changed view=%p container=%p", view, view ? view->container : NULL);
+	if (!view || !view->container) {
+		return;
+	}
+	struct sway_container *con = view->container;
+	// Floating / scratchpad windows size themselves; only tiled views need
+	// the workspace relayout + overflow reconciliation.
+	if (container_is_floating(con) || con->scratchpad) {
+		return;
+	}
+	if (!con->pending.workspace) {
+		return;
+	}
+	// Refresh the cached constraints and let the layout re-apply the clamp
+	// and merge any overflowing columns.
+	workspace_fix_overflow(con->pending.workspace);
+}
+
 uint32_t view_configure(struct sway_view *view, double lx, double ly, int width,
 		int height) {
 	if (view->impl->configure) {
@@ -890,7 +909,9 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 			view->container->pending.border = config->border;
 			view->container->pending.border_thickness = config->border_thickness;
 			view_set_tiled(view, true);
+			sway_log(SWAY_DEBUG, "[CRASHTRACE] view_map BEFORE workspace_add_tiling container=%p", (void*)container);
 			container = workspace_add_tiling(ws, container);
+			sway_log(SWAY_DEBUG, "[CRASHTRACE] view_map AFTER workspace_add_tiling container=%p", (void*)container);
 		}
 	}
 	ipc_event_window(view->container, "new");
@@ -917,8 +938,10 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 		arrange_workspace(view->container->pending.workspace);
 	} else {
 		if (container->pending.parent) {
+			sway_log(SWAY_DEBUG, "[CRASHTRACE] view_map arrange_container parent=%p", (void*)container->pending.parent);
 			arrange_container(container->pending.parent);
 		} else if (container->pending.workspace) {
+			sway_log(SWAY_DEBUG, "[CRASHTRACE] view_map arrange_workspace ws=%p", (void*)container->pending.workspace);
 			arrange_workspace(container->pending.workspace);
 		}
 	}
