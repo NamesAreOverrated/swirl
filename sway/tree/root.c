@@ -252,6 +252,13 @@ void root_minimize_container(struct sway_container *con) {
 	struct sway_container *parent = con->pending.parent;
 
 	con->minimized_was_floating = container_is_floating(con);
+	// Reparent the scene node to the staging tree *before* detaching so that
+	// reaping the now-empty parent column (a lone tiling window) cannot
+	// destroy it. Otherwise the minimized view's scene node is freed along
+	// with the column and can never be re-shown. Floating windows have no
+	// column parent and are unaffected. The restore transaction reparents it
+	// back into the new column/content tree.
+	wlr_scene_node_reparent(&con->scene_tree->node, root->staging);
 	container_detach(con);
 	// Reap any now-empty parenting containers (e.g. a column whose last
 	// window was minimized) so we don't leave dangling empties behind.
@@ -270,6 +277,7 @@ void root_minimize_container(struct sway_container *con) {
 	}
 
 	ipc_event_window(con, "move");
+	ipc_event_minimize(con, true);
 }
 
 void root_minimized_show(struct sway_container *con) {
@@ -323,6 +331,7 @@ void root_minimized_show(struct sway_container *con) {
 	seat_set_focus(seat, seat_get_focus_inactive(seat, &con->node));
 
 	ipc_event_window(con, "move");
+	ipc_event_minimize(con, false);
 }
 
 void root_for_each_workspace(void (*f)(struct sway_workspace *ws, void *data),

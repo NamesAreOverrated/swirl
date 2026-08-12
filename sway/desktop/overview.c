@@ -265,6 +265,21 @@ static void overview_collect(struct sway_container *con,
   }
 }
 
+static void overview_collect_minimized(struct sway_output *output,
+                                       struct wlr_renderer *renderer,
+                                       struct wlr_allocator *alloc,
+                                       const struct wlr_drm_format *fmt,
+                                       float scale, int bt, int *con_idx) {
+  for (int i = 0; i < root->minimized->length; i++) {
+    struct sway_container *con = root->minimized->items[i];
+    if (con->view && con->view->saved_buffer) {
+      (*con_idx)++;
+      overview_thumbnail_create(con, NULL, output, NULL,
+                                renderer, alloc, fmt, scale, bt, *con_idx);
+    }
+  }
+}
+
 bool overview_is_active(void) { return overview_active; }
 
 void overview_set_params(enum overview_scope scope,
@@ -313,6 +328,13 @@ static void overview_action_swap(struct overview_thumbnail *t) {
   }
 }
 
+static void overview_action_restore(struct overview_thumbnail *t) {
+  if (!t->con)
+    return;
+  root_minimized_show(t->con);
+  transaction_commit_dirty();
+}
+
 bool overview_handle_key(xkb_keysym_t sym) {
   if (!overview_active)
     return false;
@@ -343,6 +365,9 @@ bool overview_handle_key(xkb_keysym_t sym) {
             break;
           case OVERVIEW_SWAP:
             overview_action_swap(t);
+            break;
+          case OVERVIEW_RESTORE:
+            overview_action_restore(t);
             break;
           }
         }
@@ -501,6 +526,62 @@ static void overview_layout_and_enable(struct sway_output *output,
   overview_active = true;
 }
 
+static void overview_layout_grid(struct sway_output *output) {
+  int n = state.n_thumbnails;
+  float scale = output->wlr_output->scale;
+  int ow = (int)(output->wlr_output->width / scale);
+  int oh = (int)(output->wlr_output->height / scale);
+  int ox = (int)(output->scene_output->x);
+  int oy = (int)(output->scene_output->y);
+
+  if (n == 0) {
+    wlr_scene_node_set_enabled(&root->layers.overview->node, true);
+    overview_active = true;
+    return;
+  }
+
+  int cols = (int)ceilf(sqrtf((float)n));
+  int rows = (int)ceilf((float)n / (float)cols);
+  float avail_w = ow * 0.9f;
+  float avail_h = oh * 0.85f;
+  float cell_w = avail_w / (float)cols;
+  float cell_h = avail_h / (float)rows;
+  float base_x = ox + (ow - avail_w) / 2.0f;
+  float base_y = oy + (oh - avail_h) / 2.0f;
+
+  int i = 0;
+  struct overview_thumbnail *t;
+  wl_list_for_each(t, &state.thumbnails, link) {
+    int r = i / cols;
+    int c = i % cols;
+    float tw = (float)t->w / scale;
+    float th = (float)t->h / scale;
+    float fit = fminf(cell_w / tw, cell_h / th);
+    tw = tw * fit;
+    th = th * fit;
+    float cx = base_x + (float)c * cell_w + (cell_w - tw) / 2.0f;
+    float cy = base_y + (float)r * cell_h + (cell_h - th) / 2.0f;
+
+    wlr_scene_buffer_set_dest_size(t->sb, (int)tw, (int)th);
+    wlr_scene_node_set_position(&t->sb->node, (int)cx, (int)cy);
+
+    if (t->badge_sb) {
+      int bsz = (int)(48 * fit);
+      if (bsz < 28) bsz = 28;
+      int bpad = (int)(2 * fit);
+      if (bpad < 1) bpad = 1;
+      wlr_scene_buffer_set_dest_size(t->badge_sb, bsz, bsz);
+      wlr_scene_node_set_position(&t->badge_sb->node, (int)cx + bpad,
+                                  (int)cy + bpad);
+      wlr_scene_node_raise_to_top(&t->badge_sb->node);
+    }
+    i++;
+  }
+
+  wlr_scene_node_set_enabled(&root->layers.overview->node, true);
+  overview_active = true;
+}
+
 static void overview_teardown(void) {
   struct overview_thumbnail *t, *tmp;
   wl_list_for_each_safe(t, tmp, &state.thumbnails, link) {
@@ -572,7 +653,11 @@ void overview_toggle(void) {
   }
 
   int con_idx = 0;
-  if (state.scope == OVERVIEW_ALL) {
+  if (state.scope == OVERVIEW_MINIMIZED) {
+    overview_collect_minimized(output, renderer, alloc, fmt,
+                               scale, bt, &con_idx);
+    overview_layout_grid(output);
+  } else if (state.scope == OVERVIEW_ALL) {
     for (int i = 0; i < output->workspaces->length; i++) {
       struct sway_workspace *ws = output->workspaces->items[i];
       overview_collect_workspace(ws, output, active_ws,

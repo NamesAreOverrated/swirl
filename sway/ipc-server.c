@@ -334,6 +334,23 @@ void ipc_event_window(struct sway_container *window, const char *change) {
 	json_object_put(obj);
 }
 
+void ipc_event_minimize(struct sway_container *con, bool minimized) {
+	if (!ipc_has_event_listeners(IPC_EVENT_MINIMIZE)) {
+		return;
+	}
+	sway_log(SWAY_DEBUG, "Sending minimize event (minimized=%d)", minimized);
+	json_object *obj = json_object_new_object();
+	json_object_object_add(obj, "change", json_object_new_string("minimize"));
+	json_object_object_add(obj, "container",
+			ipc_json_describe_node_recursive(&con->node));
+	json_object_object_add(obj, "minimized",
+			json_object_new_boolean(minimized));
+
+	const char *json_string = json_object_to_json_string(obj);
+	ipc_send_event(json_string, IPC_EVENT_MINIMIZE);
+	json_object_put(obj);
+}
+
 void ipc_event_barconfig_update(struct bar_config *bar) {
 	if (!ipc_has_event_listeners(IPC_EVENT_BARCONFIG_UPDATE)) {
 		return;
@@ -764,6 +781,8 @@ void ipc_client_handle_command(struct ipc_client *client, uint32_t payload_lengt
 				is_tick = true;
 			} else if (strcmp(event_type, "input") == 0) {
 				client->subscribed_events |= event_mask(IPC_EVENT_INPUT);
+			} else if (strcmp(event_type, "minimize") == 0) {
+				client->subscribed_events |= event_mask(IPC_EVENT_MINIMIZE);
 			} else {
 				const char msg[] = "{\"success\": false}";
 				ipc_send_reply(client, payload_type, msg, strlen(msg));

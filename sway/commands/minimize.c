@@ -1,5 +1,7 @@
+#include <stdlib.h>
 #include <string.h>
 #include "sway/commands.h"
+#include "sway/desktop/overview.h"
 #include "sway/desktop/transaction.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
@@ -31,14 +33,36 @@ static struct cmd_results *minimize_show(void) {
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
 
+static struct cmd_results *minimize_show_n(int n) {
+	if (!root->minimized->length) {
+		return cmd_results_new(CMD_INVALID, "Minimize pool is empty");
+	}
+	if (n < 1 || n > root->minimized->length) {
+		return cmd_results_new(CMD_INVALID,
+				"No such minimized window: %d (pool has %d)", n,
+				root->minimized->length);
+	}
+	struct sway_container *con = root->minimized->items[n - 1];
+	root_minimized_show(con);
+	transaction_commit_dirty();
+	return cmd_results_new(CMD_SUCCESS, NULL);
+}
+
 struct cmd_results *cmd_minimize(int argc, char **argv) {
 	struct cmd_results *error = NULL;
-	if (argc > 1
-			|| (error = checkarg(argc, "minimize", EXPECTED_AT_MOST, 1))) {
+	if (argc == 0) {
+		struct sway_seat *seat = input_manager_current_seat();
+		struct sway_node *node = seat_get_focus(seat);
+		if (!node || node->type != N_CONTAINER) {
+			return cmd_results_new(CMD_INVALID, "No focusable container");
+		}
+		return minimize_hide(node->sway_container);
+	}
+	if ((error = checkarg(argc, "minimize", EXPECTED_AT_LEAST, 1))) {
 		return error;
 	}
 
-	if (argc == 0 || strcmp(argv[0], "hide") == 0) {
+	if (strcmp(argv[0], "hide") == 0) {
 		if (config->handler_context.node_overridden) {
 			return minimize_hide(config->handler_context.container);
 		}
@@ -49,6 +73,15 @@ struct cmd_results *cmd_minimize(int argc, char **argv) {
 		}
 		return minimize_hide(node->sway_container);
 	} else if (strcmp(argv[0], "show") == 0) {
+		if (argc >= 2) {
+			char *end;
+			long n = strtol(argv[1], &end, 10);
+			if (*end != '\0' || n < 1) {
+				return cmd_results_new(CMD_INVALID,
+						"Expected 'minimize show [<n>]'");
+			}
+			return minimize_show_n((int)n);
+		}
 		return minimize_show();
 	} else if (strcmp(argv[0], "toggle") == 0) {
 		struct sway_container *con =
@@ -69,8 +102,12 @@ struct cmd_results *cmd_minimize(int argc, char **argv) {
 			return minimize_hide(node->sway_container);
 		}
 		return minimize_show();
+	} else if (strcmp(argv[0], "overview") == 0) {
+		overview_set_params(OVERVIEW_MINIMIZED, OVERVIEW_RESTORE);
+		overview_toggle();
+		return cmd_results_new(CMD_SUCCESS, NULL);
 	}
 
 	return cmd_results_new(CMD_INVALID, "Expected 'minimize', 'minimize hide', "
-			"'minimize show' or 'minimize toggle'");
+			"'minimize show [<n>]', 'minimize overview' or 'minimize toggle'");
 }

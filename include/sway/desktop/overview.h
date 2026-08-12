@@ -7,12 +7,14 @@
 enum overview_scope {
 	OVERVIEW_CURRENT,
 	OVERVIEW_ALL,
+	OVERVIEW_MINIMIZED,
 };
 
 enum overview_action {
 	OVERVIEW_FOCUS,
 	OVERVIEW_PULL,
 	OVERVIEW_SWAP,
+	OVERVIEW_RESTORE,
 };
 
 bool overview_is_active(void);

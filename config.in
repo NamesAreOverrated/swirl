@@ -177,6 +177,21 @@ output * bg @datadir@/backgrounds/sway/Sway_Wallpaper_Blue_1920x1080.png fill
     # If there are multiple scratchpad windows, this command cycles through them.
     bindsym $mod+minus scratchpad show
 #
+# Minimize:
+#
+    # Hide (minimize) the focused window into the minimize pool
+    bindsym $mod+Escape minimize hide
+
+    # Open an interactive overview of minimized windows. Click a thumbnail or
+    # press its number badge (two digits, e.g. 01-09, 10, 11) to restore it.
+    # Press Escape to cancel.
+    bindsym $mod+Shift+Escape minimize overview
+
+    # Mouse: minimize the focused window with $mod + middle click
+    # (--whole-window so it fires on the window body, not just the titlebar)
+    bindsym --whole-window $mod+BTN_MIDDLE minimize hide
+    bindsym --whole-window $mod+Shift+BTN_MIDDLE minimize overview
+#
 # Resizing containers:
 #
 mode "resize" {
