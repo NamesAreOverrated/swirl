@@ -544,7 +544,7 @@ static void arrange_fullscreen(struct wlr_scene_tree *tree,
 static void arrange_workspace_floating(struct sway_workspace *ws) {
   for (int i = 0; i < ws->current.floating->length; i++) {
     struct sway_container *floater = ws->current.floating->items[i];
-    struct wlr_scene_tree *layer = root->layers.floating;
+    struct wlr_scene_tree *layer = ws->layers.floating;
 
     if (floater->current.fullscreen_mode != FULLSCREEN_NONE) {
       continue;
@@ -619,7 +619,7 @@ static void disable_workspace(struct sway_workspace *ws) {
 
   for (int i = 0; i < ws->current.floating->length; i++) {
     struct sway_container *floater = ws->current.floating->items[i];
-    wlr_scene_node_reparent(&floater->scene_tree->node, root->layers.floating);
+    wlr_scene_node_reparent(&floater->scene_tree->node, ws->layers.floating);
     disable_container(floater);
     wlr_scene_node_set_enabled(&floater->scene_tree->node, false);
   }
@@ -635,11 +635,18 @@ static void arrange_output(struct sway_output *output, int width, int height) {
     wlr_scene_node_reparent(&child->layers.tiling->node, output->layers.tiling);
     wlr_scene_node_reparent(&child->layers.fullscreen->node,
                             output->layers.fullscreen);
+    // Each workspace owns a floating layer, hung under the global floating
+    // layer so floaters stay above all tiling while remaining grouped by
+    // workspace. Floaters use global coordinates, so the layer sits at the
+    // origin (no offset) to keep those coordinates valid.
+    wlr_scene_node_reparent(&child->layers.floating->node,
+                            root->layers.floating);
+    wlr_scene_node_set_position(&child->layers.floating->node, 0, 0);
 
     for (int i = 0; i < child->current.floating->length; i++) {
       struct sway_container *floater = child->current.floating->items[i];
       wlr_scene_node_reparent(&floater->scene_tree->node,
-                              root->layers.floating);
+                              child->layers.floating);
       wlr_scene_node_set_enabled(&floater->scene_tree->node, activated);
     }
 

@@ -31,6 +31,7 @@ struct sway_workspace {
 	struct {
 		struct wlr_scene_tree *tiling;
 		struct wlr_scene_tree *fullscreen;
+		struct wlr_scene_tree *floating;
 	} layers;
 
 	struct sway_container *fullscreen;
