@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_toplevel_tag_v1.h>
 #include <wlr/util/edges.h>
 #include "log.h"
@@ -53,11 +54,19 @@ static void popup_unconstrain(struct sway_xdg_popup *popup) {
 
 	struct sway_output *output = workspace->output;
 
+	// Use the view's real scene position rather than pending.content_x/y:
+	// this layout keeps tiling coordinates workspace-relative, but the popup
+	// steering box is expressed in the toplevel surface's own coordinate
+	// system. Deriving it from the scene tree makes it correct regardless of
+	// output offset or tiling position.
+	int cx, cy;
+	wlr_scene_node_coords(&view->content_tree->node, &cx, &cy);
+
 	// the output box expressed in the coordinate system of the toplevel parent
 	// of the popup
 	struct wlr_box output_toplevel_sx_box = {
-		.x = output->lx - view->container->pending.content_x + view->geometry.x,
-		.y = output->ly - view->container->pending.content_y + view->geometry.y,
+		.x = output->lx - cx + view->geometry.x,
+		.y = output->ly - cy + view->geometry.y,
 		.width = output->width,
 		.height = output->height,
 	};

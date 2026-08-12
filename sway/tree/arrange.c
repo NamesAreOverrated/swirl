@@ -4,10 +4,12 @@
 #include <string.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
+#include "sway/desktop/transaction.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/column.h"
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"
+#include "sway/tree/root.h"
 #include "sway/tree/viewport.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
@@ -347,6 +349,12 @@ void arrange_workspace(struct sway_workspace *workspace) {
 		}
 
 		arrange_floating(workspace->floating);
+
+		// Re-anchor popups to their parent views now that the workspace has
+		// been laid out (their scene positions depend on the tiling layout).
+		// arrange_root already does this, but workspace-level arranges (e.g.
+		// column moves/resizes) don't always go through arrange_root.
+		arrange_popups(root->layers.popup);
 	}
 }
 
