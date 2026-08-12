@@ -279,43 +279,6 @@ static uint32_t configure(struct sway_view *view, double lx, double ly, int widt
 	return 0;
 }
 
-void xwayland_update_geometry(struct sway_view *view) {
-	if (!view || view->type != SWAY_VIEW_XWAYLAND ||
-			!view->wlr_xwayland_surface) {
-		return;
-	}
-	int wx, wy;
-	wlr_scene_node_coords(&view->content_tree->node, &wx, &wy);
-	double cx = view->container->current.content_x;
-	double cy = view->container->current.content_y;
-	if (fabs(wx - cx) > 0.5 || fabs(wy - cy) > 0.5) {
-		view->container->current.content_x = wx;
-		view->container->current.content_y = wy;
-		view->container->pending.content_x = wx;
-		view->container->pending.content_y = wy;
-		configure(view, wx, wy,
-				view->container->current.content_width,
-				view->container->current.content_height);
-	}
-}
-
-void xwayland_sync_column_geometry_done(void *data) {
-	struct sway_container *col = data;
-	if (!col) {
-		return;
-	}
-	if (col->view && col->view->type == SWAY_VIEW_XWAYLAND) {
-		xwayland_update_geometry(col->view);
-	}
-	if (col->current.children) {
-		for (int i = 0; i < col->current.children->length; i++) {
-			struct sway_container *child = col->current.children->items[i];
-			if (child->view && child->view->type == SWAY_VIEW_XWAYLAND) {
-				xwayland_update_geometry(child->view);
-			}
-		}
-	}
-}
 
 static void set_activated(struct sway_view *view, bool activated) {
 	if (xwayland_view_from_view(view) == NULL) {
@@ -674,11 +637,17 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 	struct sway_seat *seat = input_manager_current_seat();
 	bool focused = seat_get_focus(seat) == &view->container->node;
 
-	if (!focused && e->minimize) {
-		wlr_xwayland_surface_set_minimized(xsurface, true);
-		root_minimize_container(view->container);
-		transaction_commit_dirty();
+	if (focused) {
+		return;
 	}
+
+	wlr_xwayland_surface_set_minimized(xsurface, e->minimize);
+	if (e->minimize) {
+		root_minimize_container(view->container);
+	} else {
+		root_minimized_show(view->container);
+	}
+	transaction_commit_dirty();
 }
 
 static void handle_request_move(struct wl_listener *listener, void *data) {

@@ -29,13 +29,5 @@ struct sway_xwayland {
 void handle_xwayland_ready(struct wl_listener *listener, void *data);
 
 struct sway_view;
-// Re-sync an XWayland view's configured geometry (content_x/content_y and the
-// underlying xsurface->x/y) with its live rendered scene position. Needed
-// because XWayland reconstructs pointer coordinates from that geometry, which
-// otherwise goes stale while the surface is being animated/resized.
-void xwayland_update_geometry(struct sway_view *view);
-// Animation-completion callback: re-sync every XWayland view in a column once
-// its slide settles, so the cached geometry matches the final position.
-void xwayland_sync_column_geometry_done(void *data);
 
 #endif

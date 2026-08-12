@@ -322,7 +322,6 @@ static void handle_commit(struct wl_listener *listener, void *data) {
 	// xdg-shell has no event for min/max size changes, so detect them here by
 	// diffing the committed toplevel state against our cached values. When the
 	// constraints change, re-layout and reconcile overflow.
-	sway_log(SWAY_DEBUG, "[CRASHTRACE] xdg handle_commit diff view=%p toplevel=%p", view, view ? view->wlr_xdg_toplevel : NULL);
 	struct wlr_xdg_toplevel *toplevel = view->wlr_xdg_toplevel;
 	double cmin_w = toplevel->current.min_width;
 	double cmax_w = toplevel->current.max_width;

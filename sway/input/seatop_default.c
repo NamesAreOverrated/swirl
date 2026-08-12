@@ -231,10 +231,6 @@ static void handle_tablet_tool_tip(struct sway_seat *seat,
 	struct sway_node *node = node_at_coords(seat,
 			cursor->cursor->x, cursor->cursor->y, &surface, &sx, &sy);
 
-	struct sway_view *btn_view = view_from_wlr_surface(surface);
-	if (btn_view) {
-		xwayland_update_geometry(btn_view);
-	}
 
 
 	if (!sway_assert(surface,
@@ -626,10 +622,6 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 
 	if (surface) {
 		if (seat_is_input_allowed(seat, surface)) {
-			struct sway_view *v = view_from_wlr_surface(surface);
-			if (v) {
-				xwayland_update_geometry(v);
-			}
 			wlr_seat_pointer_notify_enter(seat->wlr_seat, surface, sx, sy);
 			wlr_seat_pointer_notify_motion(seat->wlr_seat, time_msec, sx, sy);
 		}
@@ -653,10 +645,6 @@ static void handle_tablet_tool_motion(struct sway_seat *seat,
 	struct sway_node *node = node_at_coords(seat,
 			cursor->cursor->x, cursor->cursor->y, &surface, &sx, &sy);
 
-	struct sway_view *tool_view = view_from_wlr_surface(surface);
-	if (tool_view) {
-		xwayland_update_geometry(tool_view);
-	}
 
 	if (config->focus_follows_mouse != FOLLOWS_NO) {
 		check_focus_follows_mouse(seat, e, node);
@@ -686,10 +674,6 @@ static void handle_touch_down(struct sway_seat *seat,
 	double sx, sy;
 	node_at_coords(seat, seat->touch_x, seat->touch_y, &surface, &sx, &sy);
 
-	struct sway_view *touch_view = view_from_wlr_surface(surface);
-	if (touch_view) {
-		xwayland_update_geometry(touch_view);
-	}
 
 	if (surface && wlr_surface_accepts_touch(surface, wlr_seat)) {
 		if (seat_is_input_allowed(seat, surface)) {

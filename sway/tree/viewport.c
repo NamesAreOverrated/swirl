@@ -357,7 +357,7 @@ bool viewport_column_is_visible(struct sway_workspace *ws, int col_idx) {
 
 void viewport_absorb_farthest(struct sway_workspace *ws,
 		int *candidates, int n_candidates, int focus_idx,
-		double *remaining, double min_col_w) {
+		double *remaining) {
 	for (int k = 0; k < n_candidates && *remaining != 0; ++k) {
 		int farthest = -1, farthest_dist = -1;
 		for (int ci = 0; ci < n_candidates; ++ci) {
@@ -373,7 +373,13 @@ void viewport_absorb_farthest(struct sway_workspace *ws,
 		candidates[farthest] = -1;  // mark used
 		struct sway_container *c = ws->tiling->items[idx];
 		double orig = c->pending.width;
-		double new_cw = fmax(min_col_w, orig - *remaining);
+		double cmin_w, cmax_w, cmin_h, cmax_h;
+		container_get_size_constraints(c, &cmin_w, &cmax_w,
+				&cmin_h, &cmax_h);
+		double cfg_min_px = workspace_width_fraction(ws,
+				config->min_column_width_fraction);
+		double col_min_w = fmax(cmin_w, cfg_min_px);
+		double new_cw = fmax(col_min_w, orig - *remaining);
 		double absorbed = orig - new_cw;
 		sway_log(SWAY_DEBUG, "[absorb]   col[%d]: %.4f -> %.4f (-%.4f) "
 			"remaining=%.4f", idx, orig, new_cw, absorbed,

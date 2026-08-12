@@ -156,7 +156,11 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 			if (candidates[ci] == edge_sib) {
 				struct sway_container *c = ws->tiling->items[edge_sib];
 				double orig = c->pending.width;
-				double new_cw = fmax(min_col_w, orig - remaining);
+				double scmin_w, scmax_w, scmin_h, scmax_h;
+				container_get_size_constraints(c, &scmin_w, &scmax_w,
+						&scmin_h, &scmax_h);
+				double sib_min_w = fmax(scmin_w, cfg_min_px);
+				double new_cw = fmax(sib_min_w, orig - remaining);
 				double absorbed = orig - new_cw;
 				remaining -= absorbed;
 				sway_log(SWAY_DEBUG, "[resize]   edge-sib col[%d]: orig=%.0f new=%.0f absorbed=%.0f remaining=%.0f",
@@ -176,7 +180,7 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 	// Farthest-first absorption for non-edge-drag events (keyboard, mod+right-click)
 	if (!(edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT)) && remaining != 0 && n_candidates > 0) {
 		viewport_absorb_farthest(ws, candidates, n_candidates, focus_idx,
-			&remaining, min_col_w);
+			&remaining);
 	}
 
 	if (remaining > 0) {

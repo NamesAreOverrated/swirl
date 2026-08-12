@@ -500,20 +500,6 @@ static void arrange_container(struct sway_container *con, int width, int height,
                                 -border_top);
     wlr_scene_buffer_set_dest_size(con->view->output_handler, width, height);
 
-    // XWayland takes content_x/y as the window's on-screen (root) origin and
-    // reconstructs the pointer position from it for hit-testing. content_x/y as
-    // computed in view_autoconfigure do not reliably track the actual rendered
-    // position (border/titlebar insets, column coordinate space), so derive
-    // them from the view's real scene world position instead -- the same
-    // approach xdg_shell uses for popup steering. This keeps X11 clients'
-    // geometry (and thus hit-testing) in sync with where the window actually
-    // renders.
-    if (con->view->type == SWAY_VIEW_XWAYLAND) {
-      int scx = 0, scy = 0;
-      wlr_scene_node_coords(&con->view->content_tree->node, &scx, &scy);
-      con->pending.content_x = scx;
-      con->pending.content_y = scy;
-    }
   } else {
     // make sure to disable the title bar if the parent is not managing it
     if (title_bar) {
@@ -636,7 +622,7 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
       };
       wlr_scene_animate_position(server.animator, &col->scene_tree->node,
           from_x, from_y, target_x, target_y, &spec,
-          xwayland_sync_column_geometry_done, col);
+          NULL, col);
     } else {
       wlr_scene_node_set_position(&col->scene_tree->node, target_x, target_y);
     }
