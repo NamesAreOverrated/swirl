@@ -1093,6 +1093,45 @@ void view_update_size(struct sway_view *view) {
 	container_set_geometry_from_content(con);
 }
 
+// Clip a tiled view's surface to its workspace's usable area so scrolled
+// column content cannot render (or accept input) past the workspace boundary.
+// The wlroots scene clip box is interpreted in the root surface's own
+// coordinate space, so we must express the workspace box in surface-local
+// coordinates: surface-local (sx, sy) maps to scene (P + sx - geometry,
+// P + sy - geometry) where P is the content tree's world position.
+void view_clip_tiled_to_workspace(struct sway_view *view) {
+	struct sway_container *con = view->container;
+	struct sway_workspace *ws = con->pending.workspace;
+	if (!ws || !ws->output) {
+		return;
+	}
+
+	struct wlr_box ws_box;
+	workspace_get_box(ws, &ws_box);
+
+	int px, py;
+	wlr_scene_node_coords(&view->content_tree->node, &px, &py);
+
+	struct wlr_box ws_local = {
+		.x = ws_box.x - px + view->geometry.x,
+		.y = ws_box.y - py + view->geometry.y,
+		.width = ws_box.width,
+		.height = ws_box.height,
+	};
+
+	struct wlr_box clip = {
+		.x = view->geometry.x,
+		.y = view->geometry.y,
+		.width = con->current.content_width,
+		.height = con->current.content_height,
+	};
+	wlr_box_intersection(&clip, &clip, &ws_local);
+
+	if (!wl_list_empty(&con->view->content_tree->children)) {
+		wlr_scene_subsurface_tree_set_clip(&con->view->content_tree->node, &clip);
+	}
+}
+
 void view_center_and_clip_surface(struct sway_view *view) {
 	struct sway_container *con = view->container;
 
@@ -1122,6 +1161,13 @@ void view_center_and_clip_surface(struct sway_view *view) {
 			};
 		}
 		wlr_scene_subsurface_tree_set_clip(&con->view->content_tree->node, &clip);
+	}
+
+	// Tiled views are additionally cropped to their workspace so vertical
+	// scroll can't bleed into stacked monitors. Floating and fullscreen views
+	// are left alone.
+	if (!container_is_floating(con) && con->pending.fullscreen_mode == FULLSCREEN_NONE) {
+		view_clip_tiled_to_workspace(view);
 	}
 }
 

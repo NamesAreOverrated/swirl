@@ -322,6 +322,7 @@ void view_unmap(struct sway_view *view);
 
 void view_update_size(struct sway_view *view);
 void view_center_and_clip_surface(struct sway_view *view);
+void view_clip_tiled_to_workspace(struct sway_view *view);
 
 struct sway_view *view_from_wlr_xdg_surface(
 	struct wlr_xdg_surface *xdg_surface);
