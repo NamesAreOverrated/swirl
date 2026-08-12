@@ -624,6 +624,14 @@ void container_begin_destroy(struct sway_container *con) {
     root_scratchpad_remove_container(con);
   }
 
+  if (con->minimized) {
+    int pool_index = list_find(root->minimized, con);
+    if (pool_index != -1) {
+      list_del(root->minimized, pool_index);
+    }
+    con->minimized = false;
+  }
+
   if (con->pending.fullscreen_mode == FULLSCREEN_GLOBAL) {
     container_fullscreen_disable(con);
   }

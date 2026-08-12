@@ -148,6 +148,8 @@ sway_cmd cmd_focus_wrapping;
 sway_cmd cmd_font;
 sway_cmd cmd_for_window;
 sway_cmd cmd_force_display_urgency_hint;
+sway_cmd cmd_default_float;
+sway_cmd cmd_minimize;
 sway_cmd cmd_force_focus_wrapping;
 sway_cmd cmd_fullscreen;
 sway_cmd cmd_gaps;

@@ -17,6 +17,7 @@
 #include "sway/scene_descriptor.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
+#include "sway/tree/root.h"
 #include "sway/server.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
@@ -633,7 +634,12 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 	struct wlr_xwayland_minimize_event *e = data;
 	struct sway_seat *seat = input_manager_current_seat();
 	bool focused = seat_get_focus(seat) == &view->container->node;
-	wlr_xwayland_surface_set_minimized(xsurface, !focused && e->minimize);
+
+	if (!focused && e->minimize) {
+		wlr_xwayland_surface_set_minimized(xsurface, true);
+		root_minimize_container(view->container);
+		transaction_commit_dirty();
+	}
 }
 
 static void handle_request_move(struct wl_listener *listener, void *data) {

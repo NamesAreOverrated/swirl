@@ -76,12 +76,14 @@ struct sway_root *root_create(struct wl_display *wl_display) {
 	root->outputs = create_list();
 	root->non_desktop_outputs = create_list();
 	root->scratchpad = create_list();
+	root->minimized = create_list();
 
 	return root;
 }
 
 void root_destroy(struct sway_root *root) {
 	list_free(root->scratchpad);
+	list_free(root->minimized);
 	list_free(root->non_desktop_outputs);
 	list_free(root->outputs);
 	wlr_scene_node_destroy(&root->root_scene->tree.node);
@@ -237,6 +239,92 @@ void root_scratchpad_hide(struct sway_container *con) {
 	ipc_event_window(con, "move");
 }
 
+void root_minimize_container(struct sway_container *con) {
+	if (!sway_assert(!con->minimized, "Container is already minimized")) {
+		return;
+	}
+	if (con->pending.fullscreen_mode != FULLSCREEN_NONE) {
+		container_fullscreen_disable(con);
+	}
+
+	struct sway_seat *seat = input_manager_current_seat();
+	struct sway_workspace *ws = con->pending.workspace;
+	struct sway_container *parent = con->pending.parent;
+
+	con->minimized_was_floating = container_is_floating(con);
+	container_detach(con);
+	// Reap any now-empty parenting containers (e.g. a column whose last
+	// window was minimized) so we don't leave dangling empties behind.
+	if (parent) {
+		container_reap_empty(parent);
+	}
+	con->minimized = true;
+	list_add(root->minimized, con);
+	// Hide the whole container subtree; the container keeps its scene node
+	// under the (now inactive) tiling/floating layer so it can be re-shown.
+	wlr_scene_node_set_enabled(&con->scene_tree->node, false);
+
+	if (ws && !ws->node.destroying) {
+		arrange_workspace(ws);
+		seat_set_focus(seat, seat_get_focus_inactive(seat, &ws->node));
+	}
+
+	ipc_event_window(con, "move");
+}
+
+void root_minimized_show(struct sway_container *con) {
+	if (!sway_assert(con->minimized, "Container is not in the minimize pool")) {
+		return;
+	}
+
+	struct sway_seat *seat = input_manager_current_seat();
+	struct sway_workspace *new_ws = seat_get_focused_workspace(seat);
+	if (!new_ws) {
+		sway_log(SWAY_DEBUG, "No focused workspace to show minimized window on");
+		return;
+	}
+
+	int index = list_find(root->minimized, con);
+	if (index != -1) {
+		list_del(root->minimized, index);
+	}
+	con->minimized = false;
+
+	if (new_ws->fullscreen) {
+		container_fullscreen_disable(new_ws->fullscreen);
+	}
+	if (root->fullscreen_global) {
+		container_fullscreen_disable(root->fullscreen_global);
+	}
+
+	// Respect the focused workspace's floating mode, falling back to the
+	// window's own mode when it was minimized.
+	if (new_ws->default_float || con->minimized_was_floating) {
+		if (con->view) {
+			view_set_tiled(con->view, false);
+		}
+		workspace_add_floating(new_ws, con);
+		if (new_ws->output) {
+			struct wlr_box output_box;
+			output_get_box(new_ws->output, &output_box);
+			floating_fix_coordinates(con, &con->transform, &output_box);
+		}
+		set_container_transform(new_ws, con);
+		container_raise_floating(con);
+	} else {
+		if (con->view) {
+			view_set_tiled(con->view, true);
+		}
+		workspace_add_tiling(new_ws, con);
+	}
+
+	wlr_scene_node_set_enabled(&con->scene_tree->node, true);
+	arrange_workspace(new_ws);
+	seat_set_focus(seat, seat_get_focus_inactive(seat, &con->node));
+
+	ipc_event_window(con, "move");
+}
+
 void root_for_each_workspace(void (*f)(struct sway_workspace *ws, void *data),
 		void *data) {
 	for (int i = 0; i < root->outputs->length; ++i) {
@@ -259,6 +347,13 @@ void root_for_each_container(void (*f)(struct sway_container *con, void *data),
 			f(container, data);
 			container_for_each_child(container, f, data);
 		}
+	}
+
+	// Minimize pool
+	for (int i = 0; i < root->minimized->length; ++i) {
+		struct sway_container *container = root->minimized->items[i];
+		f(container, data);
+		container_for_each_child(container, f, data);
 	}
 
 	// Saved workspaces

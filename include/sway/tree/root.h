@@ -64,6 +64,7 @@ struct sway_root {
 	list_t *outputs; // struct sway_output
 	list_t *non_desktop_outputs; // struct sway_output_non_desktop
 	list_t *scratchpad; // struct sway_container
+	list_t *minimized; // struct sway_container
 
 	// For when there's no connected outputs
 	struct sway_output *fallback_output;
@@ -102,6 +103,18 @@ void root_scratchpad_show(struct sway_container *con);
  * Hide a single scratchpad container.
  */
 void root_scratchpad_hide(struct sway_container *con);
+
+/**
+ * Minimize a container into the global pool. It is detached from the tree,
+ * removed from the scene, and parked in root->minimized.
+ */
+void root_minimize_container(struct sway_container *con);
+
+/**
+ * Call the next minimized container out of the pool into the focused
+ * workspace, honoring that workspace's default-floating mode.
+ */
+void root_minimized_show(struct sway_container *con);
 
 void root_for_each_workspace(void (*f)(struct sway_workspace *ws, void *data),
 		void *data);

@@ -242,8 +242,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 	double tiling_off_x = 0, tiling_off_y = 0;
 	struct sway_workspace *ws = con->pending.workspace;
 	if (ws && ws->output) {
-		tiling_off_x = ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
-		tiling_off_y = ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
+		tiling_off_x = ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x;
+		tiling_off_y = ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y;
 		struct sway_container *col = container_toplevel_ancestor(con);
 		double col_px = (col && !col->view) ? col->pending.x : 0;
 		double col_py = (col && !col->view) ? col->pending.y : 0;
@@ -297,8 +297,8 @@ static void handle_motion_postthreshold(struct sway_seat *seat) {
 		node_get_box(node_get_parent(&con->node), &box);
 		// Container boxes (e.g. column) are in tiling-layer space; convert to screen.
 		if (ws && ws->output && node_get_parent(&con->node)->type == N_CONTAINER) {
-			box.x += ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x - ws->viewport_x;
-			box.y += ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y - ws->viewport_y;
+			box.x += ws->output->lx + ws->current_gaps.left + ws->output->usable_area.x;
+			box.y += ws->output->ly + ws->current_gaps.top + ws->output->usable_area.y;
 		}
 		if (layout == L_HORIZ || layout == L_TABBED) {
 			if (cursor->cursor->y < thresh_top) {

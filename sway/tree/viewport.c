@@ -22,18 +22,6 @@ static bool fully_visible(double x, double w, double vp, double vpl) {
 	return x >= vp && x + w <= vp + vpl;
 }
 
-static double total_extent_h(list_t *tiling, int gaps) {
-	double total = 0;
-	for (int i = 0; i < tiling->length; ++i) {
-		struct sway_container *c = tiling->items[i];
-		total += c->pending.width;
-		if (i < tiling->length - 1) {
-			total += gaps;
-		}
-	}
-	return total;
-}
-
 static double total_extent_v(list_t *children, int gaps) {
 	double total = 0;
 	for (int i = 0; i < children->length; ++i) {
@@ -44,17 +32,6 @@ static double total_extent_v(list_t *children, int gaps) {
 		}
 	}
 	return total;
-}
-
-static double edge_snap_horiz(double con_x, double con_w, double vp,
-		double area_w, double max_x) {
-	if (fully_visible(con_x, con_w, vp, area_w)) {
-		return vp;
-	}
-	double target = con_x < vp ? con_x : con_x + con_w - area_w;
-	target = target < 0.0 ? 0.0 : target;
-	target = target > max_x ? max_x : target;
-	return target;
 }
 
 static double edge_snap_vert(double con_y, double con_h, double vp,
@@ -77,13 +54,33 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	int gaps = ws->gaps_inner;
 	double usable_h = parent->height;
 
+	// Fit-to-width: normalize width fractions so columns always fill the
+	// parent width (no overflow past the workspace boundary). Ratios between
+	// columns are preserved.
+	int n = ws->tiling->length;
+	double total_frac = 0;
+	for (int i = 0; i < n; ++i) {
+		struct sway_container *col = ws->tiling->items[i];
+		total_frac += col->width_fraction > 0 ? col->width_fraction : 1.0;
+	}
+	if (total_frac <= 0) {
+		total_frac = n;
+	}
+	double child_total_width = fmax(0, parent->width - gaps * (n - 1));
+
 	double x = 0;
-	for (int i = 0; i < ws->tiling->length; ++i) {
+	for (int i = 0; i < n; ++i) {
 		struct sway_container *col = ws->tiling->items[i];
 
+		double frac = col->width_fraction > 0 ? col->width_fraction : 1.0;
 		col->pending.x = x;
 		col->pending.y = 0;
 		col->pending.height = usable_h;
+		if (i < n - 1) {
+			col->pending.width = round(frac / total_frac * child_total_width);
+		} else {
+			col->pending.width = fmax(0, parent->width - x);
+		}
 		node_set_dirty(&col->node);
 
 		if (!col->view && col->pending.children) {
@@ -133,19 +130,9 @@ void viewport_arrange_windows(struct sway_container *col) {
 void viewport_compute_offset(struct sway_workspace *ws,
 		struct sway_container *active, double area_width,
 		double area_height) {
-	if (!active || active->node.destroying) {
-		ws->viewport_x = 0;
-		ws->viewport_y = 0;
-		return;
-	}
-
-	int gaps = ws->gaps_inner;
-	double total_w = total_extent_h(ws->tiling, gaps);
-	double max_x = total_w > area_width ? total_w - area_width : 0.0;
-
-	ws->viewport_x = round(edge_snap_horiz(active->pending.x,
-		active->pending.width,
-		ws->viewport_x, area_width, max_x));
+	// Horizontal scrolling has been removed: columns always fit within the
+	// workspace width, so the viewport is fixed at (0,0).
+	ws->viewport_x = 0;
 	ws->viewport_y = 0;
 }
 
@@ -243,22 +230,10 @@ void handle_focus_viewport(struct sway_seat *seat,
 		return;
 	}
 
-	int gaps = ws->gaps_inner;
-	double area_w = ws->width;
 	double area_h = ws->height;
 
-	// Horizontal — edge-snap column into viewport
-	double total_w = total_extent_h(ws->tiling, gaps);
-	double max_x = total_w > area_w ? total_w - area_w : 0.0;
-	double old_vp_x = ws->viewport_x;
-	ws->viewport_x = round(edge_snap_horiz(col->pending.x,
-		col->pending.width,
-		ws->viewport_x, area_w, max_x));
-	sway_log(SWAY_DEBUG, "[focus_vp] vp_x: %.4f -> %.4f (delta=%.4f) "
-		"col[%d] x=%.4f w=%.4f total=%.4f area_w=%.4f max_x=%.4f",
-		old_vp_x, ws->viewport_x, ws->viewport_x - old_vp_x,
-		list_find(ws->tiling, col), col->pending.x,
-		col->pending.width, total_w, area_w, max_x);
+	// Horizontal scrolling has been removed; keep the viewport fixed.
+	ws->viewport_x = 0;
 	ws->viewport_y = 0;
 
 	// Vertical — edge-snap focused window into column viewport

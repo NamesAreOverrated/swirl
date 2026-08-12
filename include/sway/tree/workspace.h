@@ -56,6 +56,10 @@ struct sway_workspace {
 	double viewport_x, viewport_y;
 	int focused_column_idx;
 
+	// When true, new windows on this workspace float by default instead of
+	// being tiled.
+	bool default_float;
+
 	struct sway_workspace_state current;
 	struct wlr_ext_workspace_handle_v1 *ext_workspace; // Always set.
 };

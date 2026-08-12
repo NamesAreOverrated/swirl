@@ -227,6 +227,7 @@ struct sway_workspace *workspace_create(struct sway_output *output,
 	ws->viewport_x = 0;
 	ws->viewport_y = 0;
 	ws->focused_column_idx = -1;
+	ws->default_float = false;
 	ws->gaps_outer = config->gaps_outer;
 	ws->gaps_inner = config->gaps_inner;
 	if (name) {

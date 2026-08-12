@@ -665,8 +665,10 @@ static void arrange_output(struct sway_output *output, int width, int height) {
 
         double old_tx = child->layers.tiling->node.x;
         double old_ty = child->layers.tiling->node.y;
-        double new_tx = gaps->left + area->x - child->current.viewport_x;
-        double new_ty = gaps->top + area->y - child->current.viewport_y;
+        // Horizontal scrolling is removed, so the tiling layer only moves with
+        // the usable area (never with a viewport offset).
+        double new_tx = gaps->left + area->x;
+        double new_ty = gaps->top + area->y;
 
         if (old_tx != new_tx || old_ty != new_ty) {
           double dist = fabs(new_tx - old_tx) + fabs(new_ty - old_ty);
