@@ -92,9 +92,9 @@ struct sway_node *node_at_coords(
 				}
 			}
 
-			if (con && (!con->view || con->view->surface)) {
-				return &con->node;
-			}
+		if (con && (!con->view || con->view->surface)) {
+			return &con->node;
+		}
 
 			if (scene_descriptor_try_get(current, SWAY_SCENE_DESC_LAYER_SHELL)) {
 				// We don't want to feed through the current workspace on
@@ -103,9 +103,9 @@ struct sway_node *node_at_coords(
 			}
 
 #if WLR_HAS_XWAYLAND
-			if (scene_descriptor_try_get(current, SWAY_SCENE_DESC_XWAYLAND_UNMANAGED)) {
-				return NULL;
-			}
+		if (scene_descriptor_try_get(current, SWAY_SCENE_DESC_XWAYLAND_UNMANAGED)) {
+			return NULL;
+		}
 #endif
 
 			if (!current->parent) {

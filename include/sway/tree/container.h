@@ -219,6 +219,30 @@ void container_set_floating(struct sway_container *container, bool enable);
 void container_set_geometry_from_content(struct sway_container *con);
 
 /**
+ * Compute the container-space (border/titlebar inclusive) min/max size that a
+ * container's view(s) can be. For a leaf view this is the view's app-requested
+ * constraints; for a container with children (e.g. a column) the width floor
+ * is the largest child's width floor. Unconstrained dimensions are DBL_MIN /
+ * DBL_MAX (no limit).
+ */
+void container_get_size_constraints(struct sway_container *con,
+		double *min_width, double *max_width,
+		double *min_height, double *max_height);
+
+/**
+ * Clamp a container's pending geometry to its view constraints in place and
+ * keep its width/height fractions in sync.
+ */
+void container_clamp_size(struct sway_container *con);
+
+/**
+ * Clamp content-space (borderless) dimensions to the view's app-requested
+ * constraints in place.
+ */
+void container_clamp_content_size(struct sway_container *con,
+		double *content_width, double *content_height);
+
+/**
  * Determine if the given container is itself floating.
  * This will return false for any descendants of a floating container.
  *

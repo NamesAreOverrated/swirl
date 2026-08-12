@@ -87,18 +87,16 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 	height = fmax(height, min_height + border_height);
 	height = fmax(height, 1);
 
-	// Apply the view's min/max size
+	// Apply the view's min/max size. `width`/`height` are container dims; the
+	// helper clamps the content (borderless) size and we re-add the border.
 	if (con->view) {
-		double view_min_width, view_max_width, view_min_height, view_max_height;
-		view_get_constraints(con->view, &view_min_width, &view_max_width,
-				&view_min_height, &view_max_height);
-		width = fmin(width, view_max_width - border_width);
-		width = fmax(width, view_min_width + border_width);
+		double cw = width - border_width;
+		double ch = height - border_height;
+		container_clamp_content_size(con, &cw, &ch);
+		width = cw + border_width;
+		height = ch + border_height;
 		width = fmax(width, 1);
-		height = fmin(height, view_max_height - border_height);
-		height = fmax(height, view_min_height + border_height);
 		height = fmax(height, 1);
-
 	}
 
 	// Recalculate these, in case we hit a min/max limit

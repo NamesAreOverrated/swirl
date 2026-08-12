@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
+#include <float.h>
 #include <math.h>
+#include <stdlib.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/log.h>
 #include "log.h"
@@ -69,6 +71,8 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 		} else {
 			col->pending.width = fmax(0, parent->width - x);
 		}
+		// Never size a column below its views' requested minimum width.
+		container_clamp_size(col);
 		node_set_dirty(&col->node);
 
 		if (!col->view && col->pending.children) {
@@ -105,26 +109,70 @@ void viewport_arrange_windows(struct sway_container *col) {
 	}
 	double usable_h = fmax(0, col->pending.height - gap * (n - 1));
 
+	// First pass: base heights from the height fractions, then floor each to
+	// its view's requested minimum (and ceiling to its maximum). Accumulate
+	// the floors so we can redistribute if the mins overflow the column.
+	double *heights = malloc(sizeof(double) * n);
+	double *mins = malloc(sizeof(double) * n);
+	double sum_mins = 0, sum_slack = 0, fixed = 0;
 	double y = 0;
 	for (int i = 0; i < n; ++i) {
 		struct sway_container *child = col->pending.children->items[i];
-
 		double hf = child->height_fraction > 0 ? child->height_fraction : 1.0;
-		if (i < n - 1) {
-			child->pending.height = round(hf / total_hf * usable_h);
-		} else {
-			child->pending.height = fmax(0, col->pending.height - y);
+		double h = (i < n - 1)
+				? round(hf / total_hf * usable_h)
+				: fmax(0, col->pending.height - y);
+
+		double min_w, max_w, min_h, max_h;
+		container_get_size_constraints(child, &min_w, &max_w, &min_h, &max_h);
+		mins[i] = (min_h != DBL_MIN) ? min_h : 0;
+		if (mins[i] > 0) {
+			h = fmax(h, mins[i]);
 		}
+		if (max_h != DBL_MAX) {
+			h = fmin(h, max_h);
+		}
+		heights[i] = h;
+		sum_mins += mins[i];
+		sum_slack += h - mins[i];
+		fixed += h;
+		y += h + gap;
+	}
+
+	// If the minimum-height floors overflow the column, shrink the children
+	// that still have slack (above their floor) proportionally so everything
+	// keeps fitting.
+	if (fixed > usable_h + 0.5) {
+		if (sum_slack > 0 && usable_h >= sum_mins) {
+			double scale = (usable_h - sum_mins) / sum_slack;
+			for (int i = 0; i < n; ++i) {
+				heights[i] = mins[i] + (heights[i] - mins[i]) * scale;
+			}
+		} else {
+			for (int i = 0; i < n; ++i) {
+				heights[i] = mins[i];
+			}
+		}
+	}
+
+	y = 0;
+	for (int i = 0; i < n; ++i) {
+		struct sway_container *child = col->pending.children->items[i];
+
+		child->pending.height = heights[i];
 		child->pending.x = col->pending.x;
 		child->pending.y = col->pending.y + y;
 		child->pending.width = col->pending.width;
-		y += child->pending.height + gap;
+		child->height_fraction = workspace_height_to_fraction(ws, heights[i]);
+		y += heights[i] + gap;
 		node_set_dirty(&child->node);
 
 		if (child->view) {
 			view_autoconfigure(child->view);
 		}
 	}
+	free(heights);
+	free(mins);
 }
 
 void viewport_compute_offset(struct sway_workspace *ws,

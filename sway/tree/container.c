@@ -18,6 +18,7 @@
 #include "sway/xdg_decoration.h"
 #include <assert.h>
 #include <drm_fourcc.h>
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -962,6 +963,114 @@ void floating_calculate_constraints(int *min_width, int *max_width,
   }
 }
 
+/**
+ * Compute the container-space (border/titlebar inclusive) min/max size that a
+ * container's view(s) can be. For a leaf view container this is that view's
+ * app-requested constraints (e.g. XWayland WM_SIZE_HINTS). For a container
+ * holding children (a column), the shared width must satisfy every child, so
+ * the width floor is the largest child's width floor; the same holds for
+ * height. Any dimension with no constraint stays at DBL_MIN / DBL_MAX.
+ */
+void container_get_size_constraints(struct sway_container *con,
+		double *min_width, double *max_width,
+		double *min_height, double *max_height) {
+	*min_width = DBL_MIN;
+	*max_width = DBL_MAX;
+	*min_height = DBL_MIN;
+	*max_height = DBL_MAX;
+
+	if (!con->view) {
+		for (int i = 0; i < con->pending.children->length; ++i) {
+			struct sway_container *child =
+				con->pending.children->items[i];
+			double cmin_w, cmax_w, cmin_h, cmax_h;
+			container_get_size_constraints(child, &cmin_w, &cmax_w,
+					&cmin_h, &cmax_h);
+			*min_width = fmax(*min_width, cmin_w);
+			*max_width = fmin(*max_width, cmax_w);
+			*min_height = fmax(*min_height, cmin_h);
+			*max_height = fmin(*max_height, cmax_h);
+		}
+		return;
+	}
+
+	double cmin_w, cmax_w, cmin_h, cmax_h;
+	view_get_constraints(con->view, &cmin_w, &cmax_w, &cmin_h, &cmax_h);
+	double bw = con->pending.border_thickness *
+		(con->pending.border != B_NONE);
+	double top = (con->pending.border == B_NORMAL &&
+			!con->pending.fullscreen_mode) ?
+		container_titlebar_height() : bw;
+	if (cmin_w != DBL_MIN) {
+		*min_width = cmin_w + 2 * bw;
+	}
+	if (cmax_w != DBL_MAX) {
+		*max_width = cmax_w + 2 * bw;
+	}
+	if (cmin_h != DBL_MIN) {
+		*min_height = cmin_h + top + bw;
+	}
+	if (cmax_h != DBL_MAX) {
+		*max_height = cmax_h + top + bw;
+	}
+}
+
+/**
+ * Clamp a container's pending geometry to its view constraints in place, and
+ * keep its width/height fractions in sync so the clamp survives the next
+ * layout pass. Used by the tiled viewport layout and resize primitives so a
+ * tiled view (e.g. an XWayland app) is never smaller than its requested
+ * minimum size.
+ */
+void container_clamp_size(struct sway_container *con) {
+	double min_w, max_w, min_h, max_h;
+	container_get_size_constraints(con, &min_w, &max_w, &min_h, &max_h);
+	if (min_w != DBL_MIN) {
+		con->pending.width = fmax(con->pending.width, min_w);
+	}
+	if (max_w != DBL_MAX) {
+		con->pending.width = fmin(con->pending.width, max_w);
+	}
+	if (min_h != DBL_MIN) {
+		con->pending.height = fmax(con->pending.height, min_h);
+	}
+	if (max_h != DBL_MAX) {
+		con->pending.height = fmin(con->pending.height, max_h);
+	}
+	if (con->pending.workspace) {
+		con->width_fraction = workspace_width_to_fraction(
+				con->pending.workspace, con->pending.width);
+		con->height_fraction = workspace_height_to_fraction(
+				con->pending.workspace, con->pending.height);
+	}
+}
+
+/**
+ * Clamp content-space dimensions (no borders) to the view's app-requested
+ * constraints in place. Used by floating resize and as a final safety net in
+ * view_autoconfigure.
+ */
+void container_clamp_content_size(struct sway_container *con,
+		double *content_width, double *content_height) {
+	if (!con->view) {
+		return;
+	}
+	double min_w, max_w, min_h, max_h;
+	view_get_constraints(con->view, &min_w, &max_w, &min_h, &max_h);
+	if (min_w != DBL_MIN) {
+		*content_width = fmax(*content_width, min_w);
+	}
+	if (max_w != DBL_MAX) {
+		*content_width = fmin(*content_width, max_w);
+	}
+	if (min_h != DBL_MIN) {
+		*content_height = fmax(*content_height, min_h);
+	}
+	if (max_h != DBL_MAX) {
+		*content_height = fmin(*content_height, max_h);
+	}
+}
+
 void floating_fix_coordinates(struct sway_container *con, struct wlr_box *old,
                               struct wlr_box *new) {
   if (!old->width || !old->height) {
@@ -995,6 +1104,8 @@ static void floating_natural_resize(struct sway_container *con) {
         fmax(min_width, fmin(view->natural_width, max_width));
     con->pending.content_height =
         fmax(min_height, fmin(view->natural_height, max_height));
+    container_clamp_content_size(con, &con->pending.content_width,
+        &con->pending.content_height);
     container_set_geometry_from_content(con);
   }
 }

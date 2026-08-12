@@ -11,6 +11,7 @@
 #include "sway/tree/container.h"
 #include "sway/tree/node.h"
 #include "sway/tree/view.h"
+#include "sway/xwayland.h"
 #include "sway/tree/workspace.h"
 #include <math.h>
 #include <stdbool.h>
@@ -252,7 +253,19 @@ static void apply_container_state(struct sway_container *container,
     is_tab_stack_child = true;
   }
 
-  if (!is_tab_stack_child && container->scene_tree && !container->node.destroying &&
+  // Tiled containers (columns and the windows inside them) are positioned
+  // output-global in container coordinates, but their scene nodes live under
+  // the workspace tiling layer (arrange shifts them back to a local position).
+  // Animating them here would drive the node to the output-global target and
+  // double-offset it. Skip the animation for all tiled containers and let the
+  // arrange pass own their positions (the column slide is performed in
+  // arrange_workspace_tiling). Floating/fullscreen keep animating here because
+  // their scene node lives at the root/output layer where global == correct.
+  bool is_tiled = !container_is_floating_or_child(container) &&
+      container->pending.fullscreen_mode == FULLSCREEN_NONE;
+
+  if (!is_tab_stack_child && !is_tiled && container->scene_tree &&
+      !container->node.destroying &&
       (old.x != container->current.x || old.y != container->current.y)) {
     double dist = fabs(container->current.x - old.x) +
       fabs(container->current.y - old.y);
@@ -486,6 +499,21 @@ static void arrange_container(struct sway_container *con, int width, int height,
     wlr_scene_node_set_position(&con->view->output_handler->node, -border_left,
                                 -border_top);
     wlr_scene_buffer_set_dest_size(con->view->output_handler, width, height);
+
+    // XWayland takes content_x/y as the window's on-screen (root) origin and
+    // reconstructs the pointer position from it for hit-testing. content_x/y as
+    // computed in view_autoconfigure do not reliably track the actual rendered
+    // position (border/titlebar insets, column coordinate space), so derive
+    // them from the view's real scene world position instead -- the same
+    // approach xdg_shell uses for popup steering. This keeps X11 clients'
+    // geometry (and thus hit-testing) in sync with where the window actually
+    // renders.
+    if (con->view->type == SWAY_VIEW_XWAYLAND) {
+      int scx = 0, scy = 0;
+      wlr_scene_node_coords(&con->view->content_tree->node, &scx, &scy);
+      con->pending.content_x = scx;
+      con->pending.content_y = scy;
+    }
   } else {
     // make sure to disable the title bar if the parent is not managing it
     if (title_bar) {
@@ -585,10 +613,33 @@ static void arrange_workspace_tiling(struct sway_workspace *ws, int width,
     // Column pending/current coordinates are output-global; the workspace
     // tiling layer already sits at the tiling origin (gaps + usable area),
     // so translate the column to a position relative to that layer.
-    wlr_scene_node_set_position(&col->scene_tree->node,
-                                col->current.x - ws->x,
-                                col->current.y - ws->y);
+    double target_x = col->current.x - ws->x;
+    double target_y = col->current.y - ws->y;
     wlr_scene_node_reparent(&col->scene_tree->node, ws->layers.tiling);
+
+    // Preserve the column slide: animate toward the new local position when it
+    // actually moved, otherwise snap. The column's coordinates are
+    // output-global, so compare the (local) target against the node's current
+    // local position.
+    double dist = fabs(target_x - col->scene_tree->node.x) +
+        fabs(target_y - col->scene_tree->node.y);
+    if (dist >= 10.0) {
+      double from_x = col->scene_tree->node.x;
+      double from_y = col->scene_tree->node.y;
+      wlr_scene_node_set_position(&col->scene_tree->node, target_x, target_y);
+
+      struct wlr_scene_anim_spec spec = {
+          .easing = WLR_EASING_SPRING,
+          .damping_ratio = 1.0,
+          .stiffness = 1200.0,
+          .epsilon = 0.001,
+      };
+      wlr_scene_animate_position(server.animator, &col->scene_tree->node,
+          from_x, from_y, target_x, target_y, &spec,
+          xwayland_sync_column_geometry_done, col);
+    } else {
+      wlr_scene_node_set_position(&col->scene_tree->node, target_x, target_y);
+    }
     // Raising each column in list order restores the same scene order anyway,
     // but every raise after the first reorders the node and re-damages its
     // full box on EVERY arrange (whole-workspace redraws per commit). Only the
