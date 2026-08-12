@@ -12,13 +12,16 @@
 #include "log.h"
 
 static struct cmd_results *minimize_hide(struct sway_container *con) {
-	if (!con || !con->view) {
-		return cmd_results_new(CMD_INVALID, "Can't minimize a non-view container");
+	if (!con) {
+		return cmd_results_new(CMD_INVALID, "No container to minimize");
 	}
 	if (con->minimized) {
 		return cmd_results_new(CMD_INVALID, "Container is already minimized");
 	}
-	root_minimize_container(con);
+	// Minimize the whole top-level grouping (a column for tiled windows,
+	// the container itself for a lone window / floating). This way hiding
+	// any window in a tiled column hides the entire column.
+	root_minimize_container(container_toplevel_ancestor(con));
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }

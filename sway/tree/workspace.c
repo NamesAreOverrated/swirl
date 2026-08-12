@@ -1033,8 +1033,14 @@ struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
 		}
 	}
 
-	// Wrap the container in a new column (also handles moved columns).
-	con = workspace_create_new_column_at(workspace, con, -1);
+	// A view is wrapped in a fresh column. A container with no view is
+	// already a column/group, so insert it directly to preserve its own
+	// layout/type (instead of nesting it inside a new L_VERT column).
+	if (was_view) {
+		con = workspace_create_new_column_at(workspace, con, -1);
+	} else {
+		con->pending.parent = NULL;
+	}
 
 	// Insert after the focused column.
 	int idx = workspace->tiling->length;

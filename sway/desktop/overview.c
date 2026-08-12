@@ -60,7 +60,54 @@ static void overview_get_origin(struct sway_container *con,
                                 struct sway_workspace *active_ws,
                                 float *ox, float *oy);
 
-static void overview_thumbnail_create(struct sway_container *con,
+static bool overview_thumbnail_create_view(struct sway_container *con,
+                                      struct sway_workspace *ws,
+                                      struct sway_output *output,
+                                      struct sway_workspace *active_ws,
+                                      struct wlr_renderer *renderer,
+                                      struct wlr_allocator *alloc,
+                                      const struct wlr_drm_format *fmt,
+                                      float scale, int bt, int idx);
+
+static void overview_thumbnail_finalize(struct wlr_buffer *buf,
+                                      struct wlr_swapchain *sc, int scw, int sch,
+                                      struct sway_container *con,
+                                      struct sway_workspace *ws,
+                                      struct sway_output *output,
+                                      struct sway_workspace *active_ws,
+                                      struct wlr_renderer *renderer,
+                                      struct wlr_allocator *alloc,
+                                      const struct wlr_drm_format *fmt,
+                                      float scale, int bt, int idx);
+
+static bool overview_thumbnail_create_column(struct sway_container *con,
+                                      struct sway_workspace *ws,
+                                      struct sway_output *output,
+                                      struct sway_workspace *active_ws,
+                                      struct wlr_renderer *renderer,
+                                      struct wlr_allocator *alloc,
+                                      const struct wlr_drm_format *fmt,
+                                      float scale, int bt, int idx);
+
+static bool overview_thumbnail_create(struct sway_container *con,
+                                      struct sway_workspace *ws,
+                                      struct sway_output *output,
+                                      struct sway_workspace *active_ws,
+                                      struct wlr_renderer *renderer,
+                                      struct wlr_allocator *alloc,
+                                      const struct wlr_drm_format *fmt,
+                                      float scale, int bt, int idx) {
+  if (con->view) {
+    if (!con->view->saved_buffer)
+      return false;
+    return overview_thumbnail_create_view(con, ws, output, active_ws,
+        renderer, alloc, fmt, scale, bt, idx);
+  }
+  return overview_thumbnail_create_column(con, ws, output, active_ws,
+      renderer, alloc, fmt, scale, bt, idx);
+}
+
+static bool overview_thumbnail_create_view(struct sway_container *con,
                                       struct sway_workspace *ws,
                                       struct sway_output *output,
                                       struct sway_workspace *active_ws,
@@ -69,13 +116,13 @@ static void overview_thumbnail_create(struct sway_container *con,
                                       const struct wlr_drm_format *fmt,
                                       float scale, int bt, int idx) {
   if (!con->view->saved_buffer)
-    return;
+    return false;
   struct wlr_buffer *saved_buf = con->view->saved_buffer;
   struct wlr_client_buffer *cb = wlr_client_buffer_get(saved_buf);
   if (!cb || !cb->texture) {
     sway_log(SWAY_INFO, "OVERVIEW:   skip idx=%d cb=%p tex=%p",
              idx, cb, cb ? cb->texture : NULL);
-    return;
+    return false;
   }
 
   int bw = saved_buf->width;
@@ -89,13 +136,13 @@ static void overview_thumbnail_create(struct sway_container *con,
   struct wlr_swapchain *sc = wlr_swapchain_create(alloc, scw, sch, fmt);
   if (!sc) {
     sway_log(SWAY_ERROR, "OVERVIEW:   swapchain create FAILED");
-    return;
+    return false;
   }
   struct wlr_buffer *buf = wlr_swapchain_acquire(sc);
   if (!buf) {
     sway_log(SWAY_ERROR, "OVERVIEW:   swapchain acquire FAILED");
     wlr_swapchain_destroy(sc);
-    return;
+    return false;
   }
 
   struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
@@ -104,7 +151,7 @@ static void overview_thumbnail_create(struct sway_container *con,
     sway_log(SWAY_ERROR, "OVERVIEW:   begin_buffer_pass FAILED");
     wlr_buffer_unlock(buf);
     wlr_swapchain_destroy(sc);
-    return;
+    return false;
   }
 
   wlr_render_pass_add_rect(
@@ -141,9 +188,20 @@ static void overview_thumbnail_create(struct sway_container *con,
     sway_log(SWAY_ERROR, "OVERVIEW:   render pass submit FAILED");
     wlr_buffer_unlock(buf);
     wlr_swapchain_destroy(sc);
-    return;
+    return false;
   }
 
+  overview_thumbnail_finalize(buf, sc, scw, sch, con, ws, output,
+      active_ws, renderer, alloc, fmt, scale, bt, idx);
+  return true;
+}
+
+static void overview_thumbnail_finalize(struct wlr_buffer *buf,
+      struct wlr_swapchain *sc, int scw, int sch,
+      struct sway_container *con, struct sway_workspace *ws,
+      struct sway_output *output, struct sway_workspace *active_ws,
+      struct wlr_renderer *renderer, struct wlr_allocator *alloc,
+      const struct wlr_drm_format *fmt, float scale, int bt, int idx) {
   struct overview_thumbnail *t = calloc(1, sizeof(*t));
   if (!t) {
     sway_log(SWAY_ERROR, "OVERVIEW:   thumb alloc FAILED");
@@ -236,6 +294,127 @@ static void overview_thumbnail_create(struct sway_container *con,
   }
 }
 
+struct overview_col_view {
+  struct wlr_client_buffer *cb;
+  int w, h;
+};
+
+static void overview_collect_column_views(struct sway_container *c,
+    struct overview_col_view *out, int *n, int max) {
+  if (*n >= max)
+    return;
+  if (c->view) {
+    if (c->view->saved_buffer) {
+      struct wlr_client_buffer *cb =
+          wlr_client_buffer_get(c->view->saved_buffer);
+      if (cb && cb->texture) {
+        out[*n].cb = cb;
+        out[*n].w = c->view->saved_buffer->width;
+        out[*n].h = c->view->saved_buffer->height;
+        (*n)++;
+      }
+    }
+    return;
+  }
+  for (int i = 0; i < c->current.children->length; i++) {
+    overview_collect_column_views(c->current.children->items[i],
+        out, n, max);
+  }
+}
+
+static bool overview_thumbnail_create_column(struct sway_container *con,
+                                      struct sway_workspace *ws,
+                                      struct sway_output *output,
+                                      struct sway_workspace *active_ws,
+                                      struct wlr_renderer *renderer,
+                                      struct wlr_allocator *alloc,
+                                      const struct wlr_drm_format *fmt,
+                                      float scale, int bt, int idx) {
+  #define MAX_COL_VIEW 64
+  struct overview_col_view cv[MAX_COL_VIEW];
+  int n = 0;
+  overview_collect_column_views(con, cv, &n, MAX_COL_VIEW);
+  if (n == 0)
+    return false;
+
+  int pad = bt;
+  int gap = bt;
+  int inner_w = 0;
+  int comp_h = 2 * pad;
+  for (int i = 0; i < n; i++) {
+    if (cv[i].w > inner_w)
+      inner_w = cv[i].w;
+    comp_h += cv[i].h;
+    if (i + 1 < n)
+      comp_h += gap;
+  }
+  int comp_w = inner_w + 2 * pad;
+  if (comp_w <= 0 || comp_h <= 0)
+    return false;
+
+  struct wlr_swapchain *sc = wlr_swapchain_create(alloc, comp_w, comp_h, fmt);
+  if (!sc)
+    return false;
+  struct wlr_buffer *buf = wlr_swapchain_acquire(sc);
+  if (!buf) {
+    wlr_swapchain_destroy(sc);
+    return false;
+  }
+
+  struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
+      renderer, buf, &(struct wlr_buffer_pass_options){0});
+  if (!pass) {
+    wlr_swapchain_destroy(sc);
+    wlr_buffer_unlock(buf);
+    return false;
+  }
+
+  wlr_render_pass_add_rect(
+      pass, &(struct wlr_render_rect_options){
+                .box = {.x = 0, .y = 0, .width = comp_w, .height = comp_h},
+                .color = {0.05, 0.05, 0.1, 1},
+            });
+
+  if (bt > 0) {
+    float col[4] = {
+        config->border_colors.unfocused.border[0],
+        config->border_colors.unfocused.border[1],
+        config->border_colors.unfocused.border[2],
+        config->border_colors.unfocused.border[3],
+    };
+    wlr_render_pass_add_rect(
+        pass, &(struct wlr_render_rect_options){
+                  .box = {.x = 0, .y = 0, .width = comp_w, .height = comp_h},
+                  .color = {col[0], col[1], col[2], col[3]},
+              });
+  }
+
+  int y = pad;
+  for (int i = 0; i < n; i++) {
+    int x = pad + (inner_w - cv[i].w) / 2;
+    float alpha = 1.0f;
+    wlr_render_pass_add_texture(
+        pass, &(struct wlr_render_texture_options){
+                  .texture = cv[i].cb->texture,
+                  .dst_box = {.x = x, .y = y,
+                              .width = cv[i].w, .height = cv[i].h},
+                  .transform = WL_OUTPUT_TRANSFORM_NORMAL,
+                  .alpha = &alpha,
+                });
+    y += cv[i].h + gap;
+  }
+
+  if (!wlr_render_pass_submit(pass)) {
+    wlr_swapchain_destroy(sc);
+    wlr_buffer_unlock(buf);
+    return false;
+  }
+
+  overview_thumbnail_finalize(buf, sc, comp_w, comp_h, con, ws, output,
+      active_ws, renderer, alloc, fmt, scale, bt, idx);
+  return true;
+}
+
 static void overview_get_origin(struct sway_container *con,
                                 struct sway_output *output,
                                 struct sway_workspace *active_ws,
@@ -276,10 +455,14 @@ static void overview_collect_minimized(struct sway_output *output,
                                        float scale, int bt, int *con_idx) {
   for (int i = 0; i < root->minimized->length; i++) {
     struct sway_container *con = root->minimized->items[i];
-    if (con->view && con->view->saved_buffer) {
-      (*con_idx)++;
-      overview_thumbnail_create(con, NULL, output, NULL,
-                                renderer, alloc, fmt, scale, bt, *con_idx);
+    // Columns (no view) are composited from their child windows; windows
+    // (with a view) are rendered directly. overview_thumbnail_create returns
+    // false when there is nothing to show, so only count successful tiles.
+    int prev = *con_idx;
+    if (overview_thumbnail_create(con, NULL, output, NULL,
+                                  renderer, alloc, fmt, scale, bt,
+                                  prev + 1)) {
+      *con_idx = prev + 1;
     }
   }
 }
@@ -677,6 +860,29 @@ static bool overview_setup(struct sway_output *output) {
   int ox = (int)(output->scene_output->x);
   int oy = (int)(output->scene_output->y);
 
+  // For the "all" overview, dim every monitor so the whole desktop reads as
+  // overview mode; otherwise dim only the (primary) output we render on.
+  if (state.scope == OVERVIEW_ALL && root->outputs->length > 1) {
+    float min_x = INFINITY, min_y = INFINITY;
+    float max_x = -INFINITY, max_y = -INFINITY;
+    for (int oi = 0; oi < root->outputs->length; oi++) {
+      struct sway_output *o = root->outputs->items[oi];
+      float osc = o->wlr_output->scale;
+      int oow = (int)(o->wlr_output->width / osc);
+      int ooh = (int)(o->wlr_output->height / osc);
+      int oox = (int)(o->scene_output->x);
+      int ooy = (int)(o->scene_output->y);
+      if (oox < min_x) min_x = oox;
+      if (ooy < min_y) min_y = ooy;
+      if (oox + oow > max_x) max_x = oox + oow;
+      if (ooy + ooh > max_y) max_y = ooy + ooh;
+    }
+    ox = (int)min_x;
+    oy = (int)min_y;
+    ow = (int)(max_x - min_x);
+    oh = (int)(max_y - min_y);
+  }
+
   state.bg = wlr_scene_rect_create(root->layers.overview, ow, oh,
                                     (float[4]){0.0, 0.0, 0.0, 0.6});
   if (state.bg) {
@@ -728,10 +934,14 @@ void overview_toggle(void) {
                                scale, bt, &con_idx);
     overview_layout_grid(output);
   } else if (state.scope == OVERVIEW_ALL) {
-    for (int i = 0; i < output->workspaces->length; i++) {
-      struct sway_workspace *ws = output->workspaces->items[i];
-      overview_collect_workspace(ws, output, active_ws,
-                                 renderer, alloc, fmt, scale, bt, &con_idx);
+    for (int oi = 0; oi < root->outputs->length; oi++) {
+      struct sway_output *o = root->outputs->items[oi];
+      float osc = o->wlr_output->scale;
+      for (int i = 0; i < o->workspaces->length; i++) {
+        struct sway_workspace *ws = o->workspaces->items[i];
+        overview_collect_workspace(ws, o, active_ws,
+                                   renderer, alloc, fmt, osc, bt, &con_idx);
+      }
     }
     overview_layout_and_enable(output, true);
   } else {
