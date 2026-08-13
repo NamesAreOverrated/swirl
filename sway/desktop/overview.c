@@ -54,12 +54,6 @@ static int overview_resolve_content(enum overview_scope scope,
 				? OVERVIEW_CONTENT_FLOATING : OVERVIEW_CONTENT_TILED;
 		}
 	}
-	// Minimized (parked, workspace-less) containers can only be restored:
-	// pulling/focusing a parked container misclassifies it (NULL workspace)
-	// and breaks the pool invariant (workspace_swap_columns/pull_column).
-	if (action != OVERVIEW_RESTORE) {
-		content_flags &= ~OVERVIEW_CONTENT_MINIMIZED;
-	}
 	return content_flags;
 }
 
@@ -110,6 +104,15 @@ void overview_collect_targets(list_t *out, enum overview_scope scope,
 		return;
 
 	content_flags = overview_resolve_content(scope, action, content_flags, seat);
+
+	// IPC clients dispatch the requested action verbatim, so unlike the
+	// graphical overview (where minimized thumbnails self-report RESTORE),
+	// minimize-pool containers must not appear for pull/focus/swap: acting
+	// on a parked container misclassifies it (NULL workspace) and breaks the
+	// pool invariant (workspace_swap_columns/pull_column).
+	if (action != OVERVIEW_RESTORE) {
+		content_flags &= ~OVERVIEW_CONTENT_MINIMIZED;
+	}
 
 	if (scope == OVERVIEW_CURRENT) {
 		struct sway_output *output = root->outputs->length
