@@ -282,7 +282,7 @@ void root_minimize_container(struct sway_container *con) {
 	ipc_event_minimize(con, true);
 }
 
-void root_minimized_remove(struct sway_container *con) {
+void workspace_minimized_remove(struct sway_container *con) {
 	for (int i = 0; i < root->outputs->length; ++i) {
 		struct sway_output *output = root->outputs->items[i];
 		for (int j = 0; j < output->workspaces->length; ++j) {
@@ -297,7 +297,7 @@ void root_minimized_remove(struct sway_container *con) {
 	}
 }
 
-void root_minimized_show(struct sway_container *con) {
+void workspace_minimized_show(struct sway_container *con) {
 	if (!sway_assert(con->minimized, "Container is not in the minimize pool")) {
 		return;
 	}
@@ -309,7 +309,7 @@ void root_minimized_show(struct sway_container *con) {
 		return;
 	}
 
-	root_minimized_remove(con);
+	workspace_minimized_remove(con);
 	con->minimized = false;
 
 	if (new_ws->fullscreen) {

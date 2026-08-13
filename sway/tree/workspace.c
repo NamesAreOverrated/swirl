@@ -1021,6 +1021,10 @@ struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
 
 	struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		struct sway_container *con) {
+	if (con->minimized) {
+		workspace_minimized_remove(con);
+		con->minimized = false;
+	}
 	sway_log(SWAY_DEBUG, "[TILE | workspace_add_tiling] con=%p "
 		"was_view=%d tiling_len=%d", con, !!con->view,
 		workspace->tiling->length);
@@ -1204,6 +1208,10 @@ void workspace_fix_overflow(struct sway_workspace *ws) {
 
 void workspace_add_floating(struct sway_workspace *workspace,
 		struct sway_container *con) {
+	if (con->minimized) {
+		workspace_minimized_remove(con);
+		con->minimized = false;
+	}
 	if (con->pending.workspace) {
 		container_detach(con);
 	}

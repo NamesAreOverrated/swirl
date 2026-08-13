@@ -645,7 +645,7 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 	if (e->minimize) {
 		root_minimize_container(view->container);
 	} else {
-		root_minimized_show(view->container);
+		workspace_minimized_show(view->container);
 	}
 	transaction_commit_dirty();
 }

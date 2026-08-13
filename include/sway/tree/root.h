@@ -112,13 +112,13 @@ void root_minimize_container(struct sway_container *con);
 /**
  * Remove a minimized container from whichever workspace pool it lives in.
  */
-void root_minimized_remove(struct sway_container *con);
+void workspace_minimized_remove(struct sway_container *con);
 
 /**
  * Call a minimized container out of its pool into the focused workspace,
  * honoring that workspace's default-floating mode.
  */
-void root_minimized_show(struct sway_container *con);
+void workspace_minimized_show(struct sway_container *con);
 
 void root_for_each_workspace(void (*f)(struct sway_workspace *ws, void *data),
 		void *data);

@@ -645,7 +645,7 @@ static void overview_action_restore(struct overview_thumbnail *t) {
     return;
   // Remove from its workspace pool and add to the focused workspace (just
   // like pull/focus/swap).
-  root_minimized_show(t->con);
+  workspace_minimized_show(t->con);
   transaction_commit_dirty();
 }
 

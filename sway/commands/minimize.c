@@ -33,7 +33,7 @@ static struct cmd_results *minimize_show(void) {
 		return cmd_results_new(CMD_INVALID, "Minimize pool is empty");
 	}
 	struct sway_container *con = ws->minimized->items[0];
-	root_minimized_show(con);
+	workspace_minimized_show(con);
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
@@ -50,7 +50,7 @@ static struct cmd_results *minimize_show_n(int n) {
 				ws->minimized->length);
 	}
 	struct sway_container *con = ws->minimized->items[n - 1];
-	root_minimized_show(con);
+	workspace_minimized_show(con);
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
@@ -96,7 +96,7 @@ struct cmd_results *cmd_minimize(int argc, char **argv) {
 				? config->handler_context.container
 				: NULL;
 		if (con && con->minimized) {
-			root_minimized_show(con);
+			workspace_minimized_show(con);
 			transaction_commit_dirty();
 			return cmd_results_new(CMD_SUCCESS, NULL);
 		}

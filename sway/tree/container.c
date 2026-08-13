@@ -821,7 +821,7 @@ void container_begin_destroy(struct sway_container *con) {
   }
 
 	if (con->minimized) {
-		root_minimized_remove(con);
+		workspace_minimized_remove(con);
 		con->minimized = false;
 	}
 
