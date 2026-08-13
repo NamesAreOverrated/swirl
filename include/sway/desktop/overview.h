@@ -38,7 +38,7 @@ void overview_swap_container(struct sway_container *focus_top,
 // type it was gathered as (so clients can route actions / label it).
 struct overview_target {
 	struct sway_container *con;
-	int type; // one of OVERVIEW_CONTENT_*
+	enum overview_content type; // bit from OVERVIEW_CONTENT_*
 };
 
 // Gather the containers the overview would present for the given scope/action,

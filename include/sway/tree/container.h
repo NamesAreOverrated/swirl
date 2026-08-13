@@ -139,7 +139,7 @@ struct sway_container {
   // Hidden scratchpad containers have a NULL parent.
   bool scratchpad;
 
-  // Indicates that the container is minimized and parked in the global
+  // Indicates that the container is minimized and parked in its workspace's
   // minimize pool. It has no parent/workspace while minimized.
   bool minimized;
   // Whether the container was floating when it was minimized. Used to honor
