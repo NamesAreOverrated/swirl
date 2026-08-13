@@ -531,12 +531,28 @@ static void overview_action_pull(struct overview_thumbnail *t) {
   struct sway_workspace *active_ws = output_get_active_workspace(root->outputs->items[0]);
   if (container_is_floating(target)) {
     // Floating windows aren't columns: relocate the window to the focused
-    // workspace (where your focus/cursor is).
+    // workspace and pull it to the pointer position.
     struct sway_workspace *src = target->pending.workspace;
     if (src != active_ws) {
       container_detach(target);
       workspace_add_floating(active_ws, target);
     }
+    struct wlr_cursor *cursor = state.seat->cursor->cursor;
+    double lx = cursor->x - target->pending.width / 2;
+    double ly = cursor->y - target->pending.height / 2;
+    struct wlr_output *output =
+        wlr_output_layout_output_at(root->output_layout, cursor->x, cursor->y);
+    if (output) {
+      struct wlr_box box;
+      wlr_output_layout_get_box(root->output_layout, output, &box);
+      lx = fmax(lx, box.x);
+      ly = fmax(ly, box.y);
+      if (lx + target->pending.width > box.x + box.width)
+        lx = box.x + box.width - target->pending.width;
+      if (ly + target->pending.height > box.y + box.height)
+        ly = box.y + box.height - target->pending.height;
+    }
+    container_floating_move_to(target, lx, ly);
     seat_set_focus_container(state.seat, target);
     transaction_commit_dirty();
     return;
