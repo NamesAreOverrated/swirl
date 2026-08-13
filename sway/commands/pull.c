@@ -11,8 +11,6 @@
 #include "log.h"
 
 struct cmd_results *cmd_pull(int argc, char **argv) {
-	struct cmd_results *error = NULL;
-
 	// 0 args: [con_id=X] pull — criteria-based overview-style pull
 	if (argc == 0) {
 		struct sway_container *target = config->handler_context.container;
@@ -75,65 +73,5 @@ struct cmd_results *cmd_pull(int argc, char **argv) {
 		return cmd_results_new(CMD_SUCCESS, NULL);
 	}
 
-	if ((error = checkarg(argc, "pull", EXPECTED_EQUAL_TO, 1))) {
-		return error;
-	}
-
-	bool left;
-	if (strcasecmp(argv[0], "left") == 0) {
-		left = true;
-	} else if (strcasecmp(argv[0], "right") == 0) {
-		left = false;
-	} else {
-		return cmd_results_new(CMD_INVALID,
-			"Usage: pull [left|right]");
-	}
-
-	struct sway_container *con = config->handler_context.container;
-	if (!con || container_is_floating(con)) {
-		return cmd_results_new(CMD_SUCCESS, NULL);
-	}
-
-	con = container_toplevel_ancestor(con);
-	struct sway_workspace *ws = con->pending.workspace;
-	if (!ws || ws->tiling->length < 2) {
-		return cmd_results_new(CMD_SUCCESS, NULL);
-	}
-
-	int focus_idx = list_find(ws->tiling, con);
-	if (focus_idx < 0) {
-		return cmd_results_new(CMD_SUCCESS, NULL);
-	}
-
-	int target_idx = -1;
-	if (left) {
-		for (int i = focus_idx - 1; i >= 0; --i) {
-			if (!viewport_column_is_visible(ws, i)) {
-				target_idx = i;
-				break;
-			}
-		}
-	} else {
-		for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
-			if (!viewport_column_is_visible(ws, i)) {
-				target_idx = i;
-				break;
-			}
-		}
-	}
-
-	if (target_idx < 0) {
-		return cmd_results_new(CMD_SUCCESS, NULL);
-	}
-
-	struct sway_container *target_col = ws->tiling->items[target_idx];
-	int insert_idx = left ? focus_idx : focus_idx + 1;
-
-	workspace_pull_column(ws, target_col, insert_idx);
-	transaction_commit_dirty();
-
-	struct sway_seat *seat = input_manager_current_seat();
-	seat_set_focus_raw(seat, &target_col->node);
-
-	return cmd_results_new(CMD_SUCCESS, NULL);
+	return cmd_results_new(CMD_INVALID, "Usage: pull");
 }
