@@ -840,12 +840,6 @@ static void handle_foreign_minimize_request(
 			listener, view, foreign_minimize_request);
 	struct wlr_foreign_toplevel_handle_v1_minimized_event *event = data;
 
-	struct sway_seat *seat = input_manager_current_seat();
-	struct sway_node *focus = seat_get_focus(seat);
-	if (focus == &view->container->node) {
-		return;
-	}
-
 	struct sway_container *top = container_toplevel_ancestor(view->container);
 	if (event->minimized) {
 		if (!top->minimized) {
