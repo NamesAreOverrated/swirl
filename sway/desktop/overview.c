@@ -38,7 +38,6 @@ struct overview_thumbnail {
   struct sway_workspace *ws;
   enum overview_action action;
   int w, h;
-  float origin_x, origin_y;
 };
 
 static bool overview_active = false;
@@ -62,11 +61,6 @@ static struct {
   enum overview_action action;
   int content;
 } state;
-
-static void overview_get_origin(struct sway_container *con,
-                                struct sway_output *output,
-                                struct sway_workspace *active_ws,
-                                float *ox, float *oy);
 
 static bool overview_thumbnail_create_view(struct sway_container *con,
                                       struct sway_workspace *ws,
@@ -99,6 +93,15 @@ static bool overview_thumbnail_create_column(struct sway_container *con,
                                        const struct wlr_drm_format *fmt,
                                        float scale, int bt, int idx,
                                        enum overview_action action);
+
+static void overview_collect_workspace(struct sway_workspace *ws,
+                                       struct sway_output *output,
+                                       struct sway_workspace *active_ws,
+                                       struct wlr_renderer *renderer,
+                                       struct wlr_allocator *alloc,
+                                       const struct wlr_drm_format *fmt,
+                                       float scale, int bt, int *con_idx,
+                                       int content);
 
 static bool overview_thumbnail_create(struct sway_container *con,
                                       struct sway_workspace *ws,
@@ -225,7 +228,6 @@ static void overview_thumbnail_finalize(struct wlr_buffer *buf,
   }
   t->w = scw;
   t->h = sch;
-  overview_get_origin(con, output, active_ws, &t->origin_x, &t->origin_y);
   t->con = con;
   t->ws = ws;
   t->action = action;
@@ -431,16 +433,6 @@ static bool overview_thumbnail_create_column(struct sway_container *con,
   return true;
 }
 
-static void overview_get_origin(struct sway_container *con,
-                                struct sway_output *output,
-                                struct sway_workspace *active_ws,
-                                float *ox, float *oy) {
-  struct wlr_box sbox;
-  container_get_screen_box(con, &sbox);
-  *ox = sbox.x;
-  *oy = sbox.y;
-}
-
 static void overview_collect(struct sway_container *con,
                              struct sway_workspace *ws,
                              struct sway_output *output,
@@ -472,43 +464,61 @@ static void overview_collect_minimized(struct sway_output *output,
                                        const struct wlr_drm_format *fmt,
                                        float scale, int bt, int *con_idx) {
   // Dedicated minimize overview: show every minimized window across all
-  // workspaces (a global catch-all). Restoring is handled by
+  // workspaces (a global catch-all). Restoration is handled by
   // overview_action_restore, which adds the window back to the focused
-  // workspace. Pass the source workspace so t->ws is set for focus switching.
+  // workspace. Reuses the per-workspace walker restricted to the pool.
   for (int oi = 0; oi < root->outputs->length; oi++) {
     struct sway_output *o = root->outputs->items[oi];
     for (int wi = 0; wi < o->workspaces->length; wi++) {
-      struct sway_workspace *ws = o->workspaces->items[wi];
-      for (int i = 0; i < ws->minimized->length; i++) {
-        struct sway_container *con = ws->minimized->items[i];
-        // Columns (no view) are composited from their child windows; windows
-        // (with a view) are rendered directly. overview_thumbnail_create
-        // returns false when there is nothing to show, so only count
-        // successful tiles.
-        int prev = *con_idx;
-        if (overview_thumbnail_create(con, ws, output, NULL,
-                                      renderer, alloc, fmt, scale, bt,
-                                      prev + 1, OVERVIEW_RESTORE)) {
-          *con_idx = prev + 1;
-        }
-      }
+      overview_collect_workspace(o->workspaces->items[wi], output, NULL,
+                                 renderer, alloc, fmt, scale, bt, con_idx,
+                                 OVERVIEW_CONTENT_MINIMIZED);
     }
   }
 }
 
 bool overview_is_active(void) { return overview_active; }
 
-void overview_set_params(enum overview_scope scope,
-		enum overview_action action, int content_flags) {
-	state.scope = scope;
-	state.action = action;
-	// Default to showing everything for non-minimized scopes when no flags
-	// are supplied.
+// Single source of truth for which content a scope/action combination shows.
+// Used by the graphical overview (set_params + toggle) and by the IPC target
+// gatherer so the two paths can never drift apart.
+static int overview_resolve_content(enum overview_scope scope,
+		enum overview_action action, int content_flags,
+		struct sway_seat *seat) {
+	// Default to everything for non-minimized scopes when no flags supplied.
 	if (content_flags == 0 && scope != OVERVIEW_MINIMIZED) {
 		content_flags = OVERVIEW_CONTENT_TILED | OVERVIEW_CONTENT_FLOATING |
 			OVERVIEW_CONTENT_MINIMIZED;
 	}
-	state.content = content_flags;
+	// Nothing but the minimize pool for a minimized scope.
+	if (scope == OVERVIEW_MINIMIZED) {
+		content_flags = OVERVIEW_CONTENT_MINIMIZED;
+	}
+	// Swap only offers same-type live partners (floating XOR tiled) so the
+	// picker presents valid swap targets.
+	if (action == OVERVIEW_SWAP && seat) {
+		struct sway_container *focus = seat_get_focused_container(seat);
+		if (focus) {
+			content_flags =
+				container_is_floating(container_toplevel_ancestor(focus))
+				? OVERVIEW_CONTENT_FLOATING : OVERVIEW_CONTENT_TILED;
+		}
+	}
+	// Minimized (parked, workspace-less) containers can only be restored:
+	// pulling/focusing a parked container misclassifies it (NULL workspace)
+	// and breaks the pool invariant (workspace_swap_columns/pull_column).
+	if (action != OVERVIEW_RESTORE) {
+		content_flags &= ~OVERVIEW_CONTENT_MINIMIZED;
+	}
+	return content_flags;
+}
+
+void overview_set_params(enum overview_scope scope,
+		enum overview_action action, int content_flags) {
+	state.scope = scope;
+	state.action = action;
+	state.content = overview_resolve_content(scope, action, content_flags,
+			input_manager_current_seat());
 }
 
 
@@ -667,6 +677,23 @@ static struct overview_thumbnail *overview_thumbnail_at(double x, double y) {
   return NULL;
 }
 
+static void overview_dispatch_action(struct overview_thumbnail *t) {
+  switch (t->action) {
+    case OVERVIEW_FOCUS:
+      overview_action_focus(t);
+      break;
+    case OVERVIEW_PULL:
+      overview_action_pull(t);
+      break;
+    case OVERVIEW_SWAP:
+      overview_action_swap(t);
+      break;
+    case OVERVIEW_RESTORE:
+      overview_action_restore(t);
+      break;
+  }
+}
+
 void overview_handle_button(struct sway_seat *seat, uint32_t button,
     bool pressed) {
   if (!pressed)
@@ -681,20 +708,7 @@ void overview_handle_button(struct sway_seat *seat, uint32_t button,
   double cy = seat->cursor->cursor->y;
   struct overview_thumbnail *t = overview_thumbnail_at(cx, cy);
   if (t) {
-    switch (t->action) {
-      case OVERVIEW_FOCUS:
-        overview_action_focus(t);
-        break;
-      case OVERVIEW_PULL:
-        overview_action_pull(t);
-        break;
-      case OVERVIEW_SWAP:
-        overview_action_swap(t);
-        break;
-      case OVERVIEW_RESTORE:
-        overview_action_restore(t);
-        break;
-    }
+    overview_dispatch_action(t);
     overview_toggle();
   }
 }
@@ -740,20 +754,7 @@ bool overview_handle_key(xkb_keysym_t sym) {
           i++;
         }
         if (t && t->con && t->con != focus) {
-          switch (t->action) {
-            case OVERVIEW_FOCUS:
-              overview_action_focus(t);
-              break;
-            case OVERVIEW_PULL:
-              overview_action_pull(t);
-              break;
-            case OVERVIEW_SWAP:
-              overview_action_swap(t);
-              break;
-            case OVERVIEW_RESTORE:
-              overview_action_restore(t);
-              break;
-          }
+          overview_dispatch_action(t);
         }
       }
       overview_toggle();
@@ -860,37 +861,7 @@ void overview_collect_targets(list_t *out, enum overview_scope scope,
 	if (!out)
 		return;
 
-	// Mirror overview_set_params: default to showing everything for
-	// non-minimized scopes when no flags are supplied.
-	if (content_flags == 0 && scope != OVERVIEW_MINIMIZED) {
-		content_flags = OVERVIEW_CONTENT_TILED | OVERVIEW_CONTENT_FLOATING |
-			OVERVIEW_CONTENT_MINIMIZED;
-	}
-
-	// Nothing but the minimize pool for a minimized scope.
-	if (scope == OVERVIEW_MINIMIZED) {
-		content_flags = OVERVIEW_CONTENT_MINIMIZED;
-	}
-
-	// Mirror overview_toggle: in swap mode, only offer tiles matching the
-	// focused container's type so the picker presents valid swap partners.
-	if (action == OVERVIEW_SWAP && seat) {
-		struct sway_container *focus = seat_get_focused_container(seat);
-		if (focus) {
-			content_flags =
-				container_is_floating(container_toplevel_ancestor(focus))
-				? OVERVIEW_CONTENT_FLOATING
-				: OVERVIEW_CONTENT_TILED;
-		}
-	}
-
-	// Minimized windows are parked (workspace == NULL) and can only be
-	// restored. pull/swap assume live tiling/floating columns: feeding a
-	// parked container into them misclassifies it and can hit a NULL
-	// workspace (workspace_swap_columns / workspace_pull_column).
-	if (action != OVERVIEW_RESTORE) {
-		content_flags &= ~OVERVIEW_CONTENT_MINIMIZED;
-	}
+	content_flags = overview_resolve_content(scope, action, content_flags, seat);
 
 	if (scope == OVERVIEW_CURRENT) {
 		struct sway_output *output = root->outputs->length
@@ -1159,13 +1130,9 @@ void overview_toggle(void) {
   }
 
   int con_idx = 0;
+  // State content was resolved by overview_set_params (scope/action defaults,
+  // swap focus-type override, minimized excluded from pull/focus).
   int content = state.content;
-  // In swap mode, only show tiles matching the focused container's type so the
-  // overview presents valid swap partners (tiled-only / floating-only).
-  if (state.action == OVERVIEW_SWAP && state.focus_con) {
-    content = container_is_floating(container_toplevel_ancestor(state.focus_con))
-        ? OVERVIEW_CONTENT_FLOATING : OVERVIEW_CONTENT_TILED;
-  }
   if (state.scope == OVERVIEW_MINIMIZED) {
     overview_collect_minimized(output, renderer, alloc, fmt,
                                scale, bt, &con_idx);
