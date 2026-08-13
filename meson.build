@@ -46,7 +46,7 @@ subproject(
 	required: false,
 	version: wlroots_version,
 )
-wlroots = dependency('wlroots-0.21', version: wlroots_version, fallback: 'wlroots')
+wlroots = dependency('wlroots-0.21-vfx', version: wlroots_version, fallback: 'wlroots')
 wlroots_features = {
 	'xwayland': false,
 	'libinput_backend': false,
