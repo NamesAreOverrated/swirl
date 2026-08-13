@@ -52,14 +52,8 @@ struct cmd_results *cmd_release(int argc, char **argv) {
 		container_insert_child(newcol, child, 0);
 	}
 
-	sway_log(SWAY_DEBUG, "[FLOAT | cmd_release] before insert: "
-		"tiling_len=%d cidx=%d siblings=%p", siblings->length, cidx,
-		siblings);
 	list_insert(siblings, cidx + 1, newcol);
 	newcol->pending.parent = NULL;
-	sway_log(SWAY_DEBUG, "[FLOAT | cmd_release] after insert: "
-		"tiling_len=%d newcol_at=%d", siblings->length,
-		list_find(siblings, newcol));
 
 	if (con->pending.children->length == 1) {
 		con->pending.layout = L_VERT;

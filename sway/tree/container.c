@@ -436,12 +436,6 @@ void container_toggle_maximize(struct sway_container *con) {
   if (!ws) {
     return;
   }
-  sway_log(SWAY_DEBUG, "[maximize] con=%p maximized=%d ws=%p ws=%dx%d col=%p "
-      "col_pending=%dx%d+%d,%d col_wf=%.3f con_hf=%.3f",
-      con, con->maximized, ws, ws->width, ws->height, col,
-      (int)col->pending.width, (int)col->pending.height,
-      (int)col->pending.x, (int)col->pending.y,
-      col->width_fraction, con->height_fraction);
 
   if (!con->maximized) {
     con->max_snapshot = create_list();
@@ -462,10 +456,6 @@ void container_toggle_maximize(struct sway_container *con) {
       list_add(con->max_snapshot, s);
     }
 
-    sway_log(SWAY_DEBUG, "[maximize] setting MAX: n_cols=%d n_win=%d gap=%d "
-        "ws=%dx%d col_h=%.0f",
-        ws->tiling->length, col->pending.children->length, ws->gaps_inner,
-        ws->width, ws->height, col->pending.height);
     double basis_w = ws->width - ws->gaps_inner;
     double basis_h = ws->height - ws->gaps_inner;
     double focused_wf = 1.0;
@@ -485,13 +475,9 @@ void container_toggle_maximize(struct sway_container *con) {
         double min_px = container_clamp_tiled_width_min(c);
         width_px -= min_px;
         double new_wf = min_px / basis_w;
-        sway_log(SWAY_DEBUG, "[maximize]   col[%d] wf=%.3f -> %.3f (min_px=%.0f)",
-            i, c->width_fraction, new_wf, min_px);
         c->width_fraction = new_wf;
       }
       focused_wf = width_px / basis_w;
-      sway_log(SWAY_DEBUG, "[maximize]   FOCUS col wf=%.3f (max px=%.0f)",
-          focused_wf, width_px);
       col->width_fraction = focused_wf;
     }
     if (col->pending.children->length > 1 && basis_h > 0) {
@@ -507,26 +493,14 @@ void container_toggle_maximize(struct sway_container *con) {
             usable_col_h);
         height_px -= floor_px;
         double new_hf = floor_px / basis_h;
-        sway_log(SWAY_DEBUG, "[maximize]   win[%d] hf=%.3f -> %.3f "
-            "(floor_px=%.0f)", i, c->height_fraction, new_hf, floor_px);
         c->height_fraction = new_hf;
       }
       focused_hf = height_px / basis_h;
-      sway_log(SWAY_DEBUG, "[maximize]   FOCUS win hf=%.3f (max px=%.0f)",
-          focused_hf, height_px);
       con->height_fraction = focused_hf;
     }
     con->maximized = true;
     arrange_workspace(ws);
-    sway_log(SWAY_DEBUG, "[maximize] MAX result con pending=%dx%d @ %d,%d "
-        "col_pending=%dx%d (ws %dx%d)",
-        (int)con->pending.width, (int)con->pending.height,
-        (int)con->pending.x, (int)con->pending.y,
-        (int)col->pending.width, (int)col->pending.height,
-        ws->width, ws->height);
   } else {
-    sway_log(SWAY_DEBUG, "[maximize] restoring snapshot (%d entries)",
-        con->max_snapshot ? con->max_snapshot->length : 0);
     for (int i = 0; i < con->max_snapshot->length; i++) {
       struct maximize_snapshot *s = con->max_snapshot->items[i];
       s->con->width_fraction = s->wf;
@@ -539,9 +513,6 @@ void container_toggle_maximize(struct sway_container *con) {
     con->max_snapshot = NULL;
     con->maximized = false;
     arrange_workspace(ws);
-    sway_log(SWAY_DEBUG, "[maximize] RESTORE result con pending=%dx%d @ %d,%d",
-        (int)con->pending.width, (int)con->pending.height,
-        (int)con->pending.x, (int)con->pending.y);
   }
 
   container_arrange_title_bar(con);
@@ -899,10 +870,6 @@ void container_reap_empty(struct sway_container *con) {
     return;
   }
   struct sway_workspace *ws = con->pending.workspace;
-  sway_log(SWAY_DEBUG, "[FLOAT | container_reap_empty] con=%p "
-    "children=%d view=%d ws=%p", con,
-    con->pending.children ? con->pending.children->length : -1,
-    !!con->view, ws);
   while (con) {
     if (con->pending.children->length) {
       return;
@@ -1576,12 +1543,6 @@ void container_set_floating(struct sway_container *container, bool enable) {
       }
     }
 
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] enable=true "
-        "container=%p old_parent=%p freed_idx=%d freed_width=%.1f "
-        "set_focus=%d ws->tiling->length=%d ws->floating->length=%d",
-        container, old_parent, freed_idx, freed_width, set_focus,
-        workspace->tiling->length, workspace->floating->length);
-
     container_detach(container);
     workspace_add_floating(workspace, container);
     if (container->view) {
@@ -1606,28 +1567,13 @@ void container_set_floating(struct sway_container *container, bool enable) {
       }
       container_reap_empty(old_parent);
     }
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] calling "
-        "workspace_even_freed freed_idx=%d freed_width=%.1f "
-        "tiling->length=%d viewport_x=%.1f ws->width=%d",
-        freed_idx, freed_width, workspace->tiling->length,
-        workspace->viewport_x, workspace->width);
     if (freed_width > 0 && freed_idx >= 0) {
       workspace_even_freed(workspace, freed_idx, freed_width);
     }
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] after tiling->float: "
-        "tiling->length=%d", workspace->tiling->length);
   } else {
     if (container->scratchpad) {
       root_scratchpad_remove_container(container);
     }
-
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] enable=false "
-        "container=%p ws=%p ws->tiling->length=%d ws->floating->length=%d "
-        "container->pending.x=%.1f y=%.1f w=%.1f h=%.1f",
-        container, workspace, workspace->tiling->length,
-        workspace->floating->length, container->pending.x,
-        container->pending.y, container->pending.width,
-        container->pending.height);
 
     int idx = workspace->tiling->length;
     double rel_x = container->pending.x - workspace->x;
@@ -1638,9 +1584,6 @@ void container_set_floating(struct sway_container *container, bool enable) {
         break;
       }
     }
-
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] idx=%d (x-pos) "
-        "rel_x=%.1f tiling->length=%d", idx, rel_x, workspace->tiling->length);
 
     container_detach(container);
     view_con = container;
@@ -1653,25 +1596,9 @@ void container_set_floating(struct sway_container *container, bool enable) {
     col->height_fraction = 1.0;
     col->pending.height = workspace->height;
 
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] col=%p created "
-        "col->pending.w=%.1f width_fraction=%.4f fit_idx=%d "
-        "container->pending.parent=%p",
-        col, col->pending.width, col->width_fraction, idx,
-        container->pending.parent);
-
     if (workspace->tiling->length > 0) {
-      sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] tiling list before fit:");
-      for (int i = 0; i < workspace->tiling->length; i++) {
-        struct sway_container *t = workspace->tiling->items[i];
-        sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating]   [%d]: %p "
-            "x=%.1f w=%.1f", i, t, t->pending.x, t->pending.width);
-      }
       workspace_fit_new_column(workspace, col, idx);
     }
-
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] after fit: "
-        "col->pending.w=%.1f col->width_fraction=%.4f",
-        col->pending.width, col->width_fraction);
 
     if (view_con->view) {
       view_set_tiled(view_con->view, true);
@@ -1692,15 +1619,6 @@ void container_set_floating(struct sway_container *container, bool enable) {
     workspace_update_representation(workspace);
     node_set_dirty(&workspace->node);
     node_set_dirty(&col->node);
-
-    sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating] after insert+arrange: "
-        "ws->tiling->length=%d col_at=%d", workspace->tiling->length,
-        list_find(workspace->tiling, col));
-    for (int i = 0; i < workspace->tiling->length; i++) {
-      struct sway_container *t = workspace->tiling->items[i];
-      sway_log(SWAY_DEBUG, "[FLOAT | container_set_floating]   tiling[%d]: %p "
-          "x=%.1f w=%.1f", i, t, t->pending.x, t->pending.width);
-    }
   }
 
   container_end_mouse_operation(view_con ? view_con : container);

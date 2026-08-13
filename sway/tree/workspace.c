@@ -1037,9 +1037,6 @@ struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
 			ipc_event_workspace(old_ws, old_ws, "minimized");
 		}
 	}
-	sway_log(SWAY_DEBUG, "[TILE | workspace_add_tiling] con=%p "
-		"was_view=%d tiling_len=%d", con, !!con->view,
-		workspace->tiling->length);
 	if (con->pending.workspace) {
 		struct sway_container *old_parent = con->pending.parent;
 		container_detach(con);
@@ -1084,9 +1081,6 @@ struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
 		idx = focus_idx + 1;
 	}
 
-	sway_log(SWAY_DEBUG, "[TILE | workspace_add_tiling] "
-		"before insert: idx=%d tiling_len=%d", idx,
-		workspace->tiling->length);
 	list_insert(workspace->tiling, idx, con);
 
 	con->pending.workspace = workspace;
@@ -1165,9 +1159,6 @@ void workspace_fix_overflow(struct sway_workspace *ws) {
 
 		struct sway_container *src = ws->tiling->items[i];
 		struct sway_container *dst = ws->tiling->items[tgt];
-		sway_log(SWAY_DEBUG, "[fix-overflow] merging col %d into col %d "
-			"(n=%d total_min=%.0f ws->width=%d)", i, tgt, n,
-			total_min, ws->width);
 
 		// Reparent src's view(s) into dst (flatten/stack).
 		if (src->view) {
@@ -1437,10 +1428,6 @@ void workspace_move_to_output(struct sway_workspace *workspace,
 struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 		struct sway_container *con, int index) {
 	struct sway_workspace *old_ws = con->pending.workspace;
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_insert_column] con=%p view=%d "
-		"has_parent=%d old_ws=%p ws=%p index=%d tiling_len=%d",
-		(void*)con, !!con->view, !!con->pending.parent,
-		(void*)old_ws, (void*)ws, index, ws->tiling->length);
 
 	// Guard: never insert a still-parked (minimized) container into the
 	// tiling tree — unwind the pool first, matching add_tiling/add_floating.
@@ -1466,7 +1453,6 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 	}
 
 	if (con->pending.workspace && con->pending.workspace != ws) {
-		sway_log(SWAY_DEBUG, "DRAG: insert_column cross-workspace detach");
 		container_detach(con);
 	}
 
@@ -1475,22 +1461,12 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 
 	int cur = list_find(ws->tiling, con);
 	if (cur >= 0) {
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_insert_column] "
-			"already in tiling at %d, target=%d tiling_len=%d",
-			cur, index, ws->tiling->length);
 		if (cur == index) return old_ws;
 		list_del(ws->tiling, cur);
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_insert_column] "
-			"after del: tiling_len=%d", ws->tiling->length);
 		if (cur < index) index--;
 	}
 
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_insert_column] "
-		"before insert: index=%d tiling_len=%d", index,
-		ws->tiling->length);
 	list_insert(ws->tiling, index, con);
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_insert_column] "
-		"after insert: tiling_len=%d", ws->tiling->length);
 	con->pending.parent = NULL;
 	con->pending.workspace = ws;
 	container_for_each_child(con, set_workspace, NULL);
@@ -1506,7 +1482,6 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 		struct sway_container *view, struct sway_container *target,
 		enum wlr_edges edge, bool after) {
 	if (view == target) {
-		sway_log(SWAY_DEBUG, "DRAG: insert_window view==target no-op");
 		return view->pending.workspace;
 	}
 
@@ -1514,18 +1489,11 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 	struct sway_container *view_col = container_toplevel_ancestor(view);
 	struct sway_container *target_col = container_toplevel_ancestor(target);
 
-	sway_log(SWAY_DEBUG, "DRAG: insert_window view=%p target=%p edge=%d after=%d "
-		"view_col=%p target_col=%p same=%d",
-		(void*)view, (void*)target, edge, after,
-		(void*)view_col, (void*)target_col, view_col && view_col == target_col);
-
 	// Same column reorder
 	if (view_col && view_col == target_col) {
 		list_t *children = view_col->pending.children;
 		int vi = list_find(children, view);
 		int ti = list_find(children, target);
-		sway_log(SWAY_DEBUG, "DRAG: insert_window same-col reorder edge=%d vi=%d ti=%d nchild=%d",
-			edge, vi, ti, children->length);
 		if (vi < 0 || ti < 0) return old_ws;
 		if (edge == WLR_EDGE_NONE) {
 			list_swap(children, vi, ti);
@@ -1549,15 +1517,12 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 		} else {
 			idx = after ? ws->tiling->length : 0;
 		}
-		sway_log(SWAY_DEBUG, "DRAG: insert_window solo-col move view_col=%p idx=%d",
-			(void*)view_col, idx);
 		workspace_insert_column(ws, view_col, idx);
 		return old_ws;
 	}
 
 	// Detach view from its current column
 	struct sway_container *old_parent = view->pending.parent;
-	sway_log(SWAY_DEBUG, "DRAG: insert_window detach view old_parent=%p", (void*)old_parent);
 	container_detach(view);
 
 	// Insert INTO target's column (TOP/BOTTOM edge)
@@ -1565,7 +1530,6 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 			|| edge == WLR_EDGE_NONE)) {
 		list_t *children = target_col->pending.children;
 		int ti = list_find(children, target);
-		sway_log(SWAY_DEBUG, "DRAG: insert_window into-target-col ti=%d nchild=%d", ti, children->length);
 		if (ti >= 0) {
 			list_insert(children, ti + after, view);
 			view->pending.parent = target_col;
@@ -1585,8 +1549,6 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 		idx = after ? ws->tiling->length : 0;
 	}
 
-	sway_log(SWAY_DEBUG, "DRAG: insert_window -> new column at idx=%d (target_col=%p, after=%d)",
-		idx, (void*)target_col, after);
 	workspace_insert_column(ws, view, idx);
 
 cleanup:
@@ -1601,22 +1563,15 @@ void workspace_update_focused_column_idx(struct sway_workspace *ws) {
 	struct sway_seat *seat = input_manager_current_seat();
 	if (!seat) {
 		ws->focused_column_idx = -1;
-		sway_log(SWAY_DEBUG, "[upd_focus_col_idx] no seat -> -1");
 		return;
 	}
 	struct sway_container *con = seat_get_focused_container(seat);
 	if (!con || con->pending.workspace != ws) {
 		ws->focused_column_idx = -1;
-		sway_log(SWAY_DEBUG, "[upd_focus_col_idx] con=%p ws_match=%d -> -1",
-			(void *)con, con ? con->pending.workspace == ws : -1);
 		return;
 	}
 	con = container_toplevel_ancestor(con);
-	int idx = list_find(ws->tiling, con);
-	sway_log(SWAY_DEBUG, "[upd_focus_col_idx] con=%p toplevel=%p idx=%d n=%d",
-		(void *)seat_get_focused_container(seat), (void *)con, idx,
-		ws->tiling->length);
-	ws->focused_column_idx = idx;
+	ws->focused_column_idx = list_find(ws->tiling, con);
 }
 
 void workspace_swap_columns(struct sway_container *a, struct sway_container *b) {
@@ -1629,32 +1584,18 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 	int idx_a = list_find(ws_a->tiling, a);
 	int idx_b = list_find(ws_b->tiling, b);
 	if (idx_a < 0 || idx_b < 0) return;
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] a=%p b=%p "
-		"ws_a=%p ws_b=%p idx_a=%d idx_b=%d tiling_len_a=%d tiling_len_b=%d",
-		a, b, ws_a, ws_b, idx_a, idx_b,
-		ws_a->tiling->length, ws_b->tiling->length);
 	double wf_a = a->width_fraction;
 	double wf_b = b->width_fraction;
 	double pw_a = a->pending.width;
 	double pw_b = b->pending.width;
 	if (ws_a == ws_b) {
 		list_del(ws_a->tiling, idx_a);
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] "
-			"after del a: tiling_len=%d", ws_a->tiling->length);
 		int adj = idx_b > idx_a ? idx_b - 1 : idx_b;
 		list_insert(ws_a->tiling, adj, a);
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] "
-			"after insert a: tiling_len=%d a_at=%d",
-			ws_a->tiling->length, list_find(ws_a->tiling, a));
 		int nb = list_find(ws_a->tiling, b);
 		if (nb >= 0) {
 			list_del(ws_a->tiling, nb);
-			sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] "
-				"after del b: tiling_len=%d", ws_a->tiling->length);
 			list_insert(ws_a->tiling, idx_a, b);
-			sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] "
-				"after insert b: tiling_len=%d b_at=%d",
-				ws_a->tiling->length, list_find(ws_a->tiling, b));
 		}
 		a->width_fraction = wf_b;
 		b->width_fraction = wf_a;
@@ -1667,13 +1608,7 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 		if (idx_a > ws_b->tiling->length) idx_a = ws_b->tiling->length;
 		if (idx_b > ws_a->tiling->length) idx_b = ws_a->tiling->length;
 		list_insert(ws_b->tiling, idx_a, a);
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] "
-			"cross-ws: insert a at %d -> ws_b tiling_len=%d",
-			idx_a, ws_b->tiling->length);
 		list_insert(ws_a->tiling, idx_b, b);
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_swap_columns] "
-			"cross-ws: insert b at %d -> ws_a tiling_len=%d",
-			idx_b, ws_a->tiling->length);
 		a->pending.workspace = ws_b;
 		b->pending.workspace = ws_a;
 		a->width_fraction = wf_b;
@@ -1763,8 +1698,6 @@ void workspace_fit_new_column(struct sway_workspace *ws,
 				}
 			}
 		}
-		sway_log(SWAY_DEBUG, "[fit-column] focus_idx %d off-screen, "
-			"adjusted to %d", orig, focus_idx);
 	}
 
 	int exclude_idx = list_find(ws->tiling, col);
@@ -1776,48 +1709,28 @@ void workspace_fit_new_column(struct sway_workspace *ws,
 	double free = fmax(0, ws->width - occupied - ws->gaps_inner);
 	double target_w;
 
-	sway_log(SWAY_DEBUG, "[fit-column] n_cols=%d focus_idx=%d n_vis=%d "
-		"occupied=%.0f default_w=%.0f min_w=%.0f free=%.0f",
-		ws->tiling->length, focus_idx, n_vis,
-		occupied, default_w, min_w, free);
-
 	if (free >= default_w) {
 		target_w = default_w;
-		sway_log(SWAY_DEBUG, "[fit-column] free >= default: %.0f >= %.0f -> target=default_w=%.0f",
-			free, default_w, default_w);
 	} else if (free >= min_w) {
 		target_w = free;
-		sway_log(SWAY_DEBUG, "[fit-column] free >= min: %.0f >= %.0f -> target=free=%.0f",
-			free, min_w, free);
 	} else {
 		target_w = default_w;
 		double overflow = occupied + ws->gaps_inner + target_w
 			- ws->width;
-		sway_log(SWAY_DEBUG, "[fit-column] default doesn't fit: overflow=%.0f "
-			"absorbing farthest", overflow);
 		if (overflow > 0 && n_vis > 0) {
 			viewport_absorb_farthest(ws, vis_candidates, n_vis,
 				focus_idx, &overflow);
-			sway_log(SWAY_DEBUG, "[fit-column] after farthest absorb remaining=%.0f",
-				overflow);
 		}
 		if (overflow > 0) {
 			target_w = fmax(min_w, default_w - overflow);
-			sway_log(SWAY_DEBUG, "[fit-column] shaving new col: "
-				"default_w=%.0f - overflow=%.0f -> target_w=%.0f",
-				default_w, overflow, target_w);
 		}
 	}
 
 	column_set_width_px(col, target_w);
-	sway_log(SWAY_DEBUG, "[fit-column] col width set to %.0f", target_w);
 }
 
 void workspace_pull_column(struct sway_workspace *ws,
 		struct sway_container *col, int insert_idx) {
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_pull_column] col=%p "
-		"insert_idx=%d tiling_len=%d", col, insert_idx,
-		ws->tiling->length);
 	struct sway_container *fs = NULL;
 	if (col->pending.fullscreen_mode != FULLSCREEN_NONE) {
 		fs = col;
@@ -1848,61 +1761,28 @@ void workspace_pull_column(struct sway_workspace *ws,
 int workspace_even_freed(struct sway_workspace *ws,
 		int column_idx, double freed_width) {
   if (!ws || ws->tiling->length == 0 || freed_width <= 0) {
-    sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] early return -1: "
-      "ws=%p tiling_len=%d freed_width=%.1f",
-      ws, ws ? ws->tiling->length : -1, freed_width);
     return -1;
   }
 
   freed_width = fmin(freed_width + ws->gaps_inner, ws->width);
 
-  sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] ws=%p "
-    "tiling->length=%d column_idx=%d freed_width=%.1f "
-    "viewport_x=%.1f ws->width=%d gaps=%d",
-    ws, ws->tiling->length, column_idx, freed_width,
-    ws->viewport_x, ws->width, ws->gaps_inner);
-
-	for (int i = 0; i < ws->tiling->length; i++) {
-		struct sway_container *c = ws->tiling->items[i];
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed]   before[%d]: %p "
-			"x=%.1f w=%.1f", i, c, c->pending.x, c->pending.width);
-	}
-
 	int last_vis = viewport_grow_evenly(ws, column_idx, freed_width);
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] "
-		"viewport_grow_evenly returned %d tiling_len=%d",
-		last_vis, ws->tiling->length);
 
 	if (last_vis >= 0) {
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] after grow_evenly:");
-		for (int i = 0; i < ws->tiling->length; i++) {
-			struct sway_container *c = ws->tiling->items[i];
-			sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed]   after[%d]: %p "
-				"x=%.1f w=%.1f", i, c, c->pending.x, c->pending.width);
-		}
 		return last_vis;
 	}
 
 	int start = column_idx < ws->tiling->length
 		? column_idx : ws->tiling->length - 1;
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] fallback start=%d "
-		"column_idx=%d tiling_len=%d freed_width=%.1f",
-		start, column_idx, ws->tiling->length, freed_width);
 	double remaining = freed_width;
 	int gaps = ws->gaps_inner;
 	int i;
 	for (i = start; i < ws->tiling->length && remaining > 1; ++i) {
 		struct sway_container *c = ws->tiling->items[i];
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed]   fallback[%d]: "
-			"w=%.1f remaining=%.1f -> %s",
-			i, c->pending.width, remaining,
-			c->pending.width > remaining ? "CLIP" : "subtract");
 		if (c->pending.width > remaining) {
 			c->pending.width = remaining;
 			c->width_fraction = workspace_width_to_fraction(ws, remaining);
 			node_set_dirty(&c->node);
-			sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] "
-				"fallback clip at [%d] -> w=%.1f", i, c->pending.width);
 			return i;
 		}
 		remaining -= c->pending.width + gaps;
@@ -1912,10 +1792,6 @@ int workspace_even_freed(struct sway_workspace *ws,
 		last->pending.width += remaining;
 		last->width_fraction = workspace_width_to_fraction(ws, last->pending.width);
 		node_set_dirty(&last->node);
-		sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] "
-			"fallback leftover -> [%d] w=%.1f", i - 1, last->pending.width);
 	}
-	sway_log(SWAY_DEBUG, "[FLOAT | workspace_even_freed] fallback done "
-		"start=%d", start);
 	return start;
 }

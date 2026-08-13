@@ -91,8 +91,6 @@ static bool overview_thumbnail_create_view(struct sway_container *con,
   struct wlr_buffer *saved_buf = con->view->saved_buffer;
   struct wlr_client_buffer *cb = wlr_client_buffer_get(saved_buf);
   if (!cb || !cb->texture) {
-    sway_log(SWAY_INFO, "OVERVIEW:   skip idx=%d cb=%p tex=%p",
-             idx, cb, cb ? cb->texture : NULL);
     return false;
   }
 
@@ -100,9 +98,6 @@ static bool overview_thumbnail_create_view(struct sway_container *con,
   int bh = saved_buf->height;
   int scw = bw + 2 * bt;
   int sch = bh + 2 * bt;
-
-  sway_log(SWAY_INFO, "OVERVIEW:   thumbnail idx=%d buf=%dx%d card=%dx%d",
-           idx, bw, bh, scw, sch);
 
   struct wlr_swapchain *sc = wlr_swapchain_create(alloc, scw, sch, fmt);
   if (!sc) {
