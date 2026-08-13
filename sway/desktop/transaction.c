@@ -278,7 +278,7 @@ static void apply_container_state(struct sway_container *container,
           .duration_ms = 1,
       };
       wlr_scene_animate_position(server.animator, &container->scene_tree->node,
-          from_x, from_y, container->current.x, container->current.y,
+          from_x, from_y, (int)container->current.x, (int)container->current.y,
           &spec, NULL, NULL);
     } else {
       double dist = fabs(container->current.x - old.x) +
@@ -294,7 +294,8 @@ static void apply_container_state(struct sway_container *container,
         };
         wlr_scene_animate_position(server.animator,
             &container->scene_tree->node, from_x, from_y,
-            container->current.x, container->current.y, &spec, NULL, NULL);
+            (int)container->current.x, (int)container->current.y,
+            &spec, NULL, NULL);
       } else {
         wlr_scene_node_set_position(&container->scene_tree->node,
             (int)container->current.x, (int)container->current.y);
@@ -593,8 +594,8 @@ static void arrange_workspace_floating(struct sway_workspace *ws) {
     }
 
     wlr_scene_node_reparent(&floater->scene_tree->node, layer);
-    wlr_scene_node_set_position(&floater->scene_tree->node, floater->current.x,
-                                floater->current.y);
+    wlr_scene_node_set_position(&floater->scene_tree->node,
+                                (int)floater->current.x, (int)floater->current.y);
     wlr_scene_node_set_enabled(&floater->scene_tree->node, true);
     wlr_scene_node_set_enabled(&floater->border.tree->node, true);
 
