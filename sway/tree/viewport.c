@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/log.h>
-#include "log.h"
 #include "sway/server.h"
 #include "sway/desktop/transaction.h"
 #include "sway/config.h"

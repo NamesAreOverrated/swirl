@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include "log.h"
 #include "sway/tree/column.h"
 #include "sway/tree/container.h"
 #include "sway/tree/viewport.h"

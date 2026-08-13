@@ -4,7 +4,6 @@
 #include "sway/output.h"
 #include <wlr/types/wlr_scene.h>
 #include <math.h>
-#include "log.h"
 
 double layout_get_default_width(struct sway_workspace *workspace) {
 	return config->default_column_width_fraction;

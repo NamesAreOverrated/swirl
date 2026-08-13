@@ -851,10 +851,10 @@ void container_begin_destroy(struct sway_container *con) {
     root_scratchpad_remove_container(con);
   }
 
-	if (con->minimized) {
-		workspace_minimized_remove(con);
-		con->minimized = false;
-	}
+  if (con->minimized) {
+    workspace_minimized_remove(con);
+    con->minimized = false;
+  }
 
   if (con->pending.fullscreen_mode == FULLSCREEN_GLOBAL) {
     container_fullscreen_disable(con);

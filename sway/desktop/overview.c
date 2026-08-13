@@ -11,7 +11,6 @@
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_scene.h>
 #include "list.h"
-#include "log.h"
 #include "sway/config.h"
 #include "sway/desktop/overview.h"
 #include "sway/desktop/overview_private.h"
@@ -480,7 +479,7 @@ void overview_toggle(void) {
 
   int con_idx = 0;
   // State content was resolved by overview_set_params (scope/action defaults,
-  // swap focus-type override, minimized excluded from pull/focus).
+  // swap focus-type override).
   int content = overview_state.content;
   if (overview_state.scope == OVERVIEW_MINIMIZED) {
     overview_collect_minimized(output, renderer, alloc, fmt,
