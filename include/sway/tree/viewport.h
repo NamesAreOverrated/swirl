@@ -35,7 +35,4 @@ int viewport_grow_evenly(struct sway_workspace *ws, int col_idx,
 
 void viewport_visible_range(struct sway_workspace *ws, int *start, int *end);
 
-struct cmd_results *cmd_evenh(int argc, char **argv);
-struct cmd_results *cmd_evenv(int argc, char **argv);
-
 #endif

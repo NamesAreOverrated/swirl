@@ -4,6 +4,14 @@
 #include "sway/tree/container.h"
 #include "sway/tree/viewport.h"
 
+// Column pending.x is output-global (see workspace_arrange_columns), but
+// visibility/fit math is tile-local (columns start at the workspace origin).
+// Convert a column's position to tile-local coordinates.
+double col_local_x(struct sway_workspace *ws,
+		const struct sway_container *col) {
+	return col->pending.x - ws->x;
+}
+
 int column_remove(struct sway_container *col, bool grow_neighbors) {
 	struct sway_workspace *ws = col->pending.workspace;
 	if (!ws) {
