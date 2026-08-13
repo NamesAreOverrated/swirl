@@ -11,3 +11,12 @@ build-*/
 config-debug
 wayland-*-protocol.*
 subprojects/.wraplock
+
+# Auto-fetched meson subproject fallbacks for wlroots' build deps
+# (downloaded into subprojects/ when the system package is missing).
+# subprojects/wlroots is tracked in git and must NOT match these.
+subprojects/libliftoff*
+subprojects/libxkbcommon*
+subprojects/pixman*
+subprojects/seatd*
+subprojects/wayland*
