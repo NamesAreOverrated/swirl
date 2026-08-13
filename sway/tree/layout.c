@@ -52,7 +52,7 @@ void column_set_width_px(struct sway_container *col, double width_px) {
 	col->pending.width = width_px;
 	struct sway_workspace *ws = col->pending.workspace;
 	if (ws && ws->width > 0) {
-		col->width_fraction = width_px / ws->width;
+		col->width_fraction = workspace_width_to_fraction(ws, width_px);
 		sway_log(SWAY_DEBUG, "[FLOAT | column_set_width_px]   new_frac=%.4f",
 			col->width_fraction);
 	}

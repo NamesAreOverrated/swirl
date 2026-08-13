@@ -259,6 +259,38 @@ void container_clamp_size(struct sway_container *con);
 void container_clamp_pixels(struct sway_container *con);
 
 /**
+ * Unified tiled min/max clamp. One consistent rule for both the resize
+ * primitives and the arrange passes, so drag, keyboard, and layout agree.
+ * `available` is the layout's upper bound (workspace width / column usable
+ * height).
+ */
+double container_clamp_tiled_width(struct sway_container *con, double desired,
+		double available);
+double container_clamp_tiled_height(struct sway_container *con, double desired,
+		double available);
+/** Floor only (view min + config min), for the arrange reserve step. */
+double container_clamp_tiled_width_min(struct sway_container *con);
+double container_clamp_tiled_height_min(struct sway_container *con);
+/**
+ * Floor only (view min + MIN_SANE_H) for the resize primitive, so a drag or
+ * keyboard resize can never collapse a window below the sane height. The
+ * arrange pass uses container_clamp_tiled_height_min (view min only) so the
+ * layout can compress smaller windows to fit instead of overflowing.
+ */
+double container_clamp_tiled_height_resize(struct sway_container *con,
+		double desired, double available);
+
+/**
+ * After a child is added to an L_VERT column, rebase all children to real
+ * height_fraction proportions (summing to ~1) so the resize primitive and the
+ * arrange pass agree. The existing children scale down proportionally to make
+ * room for the new one (their relative ratios are preserved); the new child
+ * takes an equal share. No-op for non-VERT parents or empty columns.
+ */
+void container_fit_vertical_children(struct sway_container *col,
+		struct sway_container *new_child);
+
+/**
  * Clamp content-space (borderless) dimensions to the view's app-requested
  * constraints in place.
  */

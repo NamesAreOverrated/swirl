@@ -1003,8 +1003,7 @@ struct sway_container *workspace_create_new_column(struct sway_workspace *ws,
 		}
 		view->height_fraction = 1.0;
 	} else {
-		double uh = ws->height - ws->current_gaps.top - ws->current_gaps.bottom;
-		view->height_fraction = uh > 0 ? height_px / uh : 0;
+		view->height_fraction = workspace_height_to_fraction(ws, height_px);
 	}
 	view->pending.height = height_px;
 
@@ -1544,6 +1543,7 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 			view->pending.parent = target_col;
 			view->pending.workspace = target_col->pending.workspace;
 			container_for_each_child(view, set_workspace, NULL);
+			container_fit_vertical_children(target_col, view);
 		}
 		goto cleanup;
 	}

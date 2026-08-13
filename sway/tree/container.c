@@ -436,6 +436,12 @@ void container_toggle_maximize(struct sway_container *con) {
   if (!ws) {
     return;
   }
+  sway_log(SWAY_DEBUG, "[maximize] con=%p maximized=%d ws=%p ws=%dx%d col=%p "
+      "col_pending=%dx%d+%d,%d col_wf=%.3f con_hf=%.3f",
+      con, con->maximized, ws, ws->width, ws->height, col,
+      (int)col->pending.width, (int)col->pending.height,
+      (int)col->pending.x, (int)col->pending.y,
+      col->width_fraction, con->height_fraction);
 
   if (!con->maximized) {
     con->max_snapshot = create_list();
@@ -456,20 +462,71 @@ void container_toggle_maximize(struct sway_container *con) {
       list_add(con->max_snapshot, s);
     }
 
-    double min_wf = config->min_column_width_fraction > 0
-        ? config->min_column_width_fraction : 0.05;
-    double min_hf = workspace_height_to_fraction(ws, MIN_SANE_H);
-    for (int i = 0; i < ws->tiling->length; i++) {
-      struct sway_container *c = ws->tiling->items[i];
-      c->width_fraction = (c == col) ? 1.0 : min_wf;
+    sway_log(SWAY_DEBUG, "[maximize] setting MAX: n_cols=%d n_win=%d gap=%d "
+        "ws=%dx%d col_h=%.0f",
+        ws->tiling->length, col->pending.children->length, ws->gaps_inner,
+        ws->width, ws->height, col->pending.height);
+    double basis_w = ws->width - ws->gaps_inner;
+    double basis_h = ws->height - ws->gaps_inner;
+    double focused_wf = 1.0;
+    double focused_hf = 1.0;
+    // Match the manual resize steady state: siblings pin to their floors and
+    // the focused window takes the rest (not a 1.0 share that sums >1 and
+    // inflates the focused window past what manual resizing can reach).
+    if (ws->tiling->length > 1 && basis_w > 0) {
+      double child_total_width = fmax(0,
+          ws->width - ws->gaps_inner * (ws->tiling->length - 1));
+      double width_px = child_total_width;
+      for (int i = 0; i < ws->tiling->length; i++) {
+        struct sway_container *c = ws->tiling->items[i];
+        if (c == col) {
+          continue;
+        }
+        double min_px = container_clamp_tiled_width_min(c);
+        width_px -= min_px;
+        double new_wf = min_px / basis_w;
+        sway_log(SWAY_DEBUG, "[maximize]   col[%d] wf=%.3f -> %.3f (min_px=%.0f)",
+            i, c->width_fraction, new_wf, min_px);
+        c->width_fraction = new_wf;
+      }
+      focused_wf = width_px / basis_w;
+      sway_log(SWAY_DEBUG, "[maximize]   FOCUS col wf=%.3f (max px=%.0f)",
+          focused_wf, width_px);
+      col->width_fraction = focused_wf;
     }
-    for (int i = 0; i < col->pending.children->length; i++) {
-      struct sway_container *c = col->pending.children->items[i];
-      c->height_fraction = (c == con) ? 1.0 : min_hf;
+    if (col->pending.children->length > 1 && basis_h > 0) {
+      double usable_col_h = fmax(0, col->pending.height
+          - ws->gaps_inner * (col->pending.children->length - 1));
+      double height_px = usable_col_h;
+      for (int i = 0; i < col->pending.children->length; i++) {
+        struct sway_container *c = col->pending.children->items[i];
+        if (c == con) {
+          continue;
+        }
+        double floor_px = container_clamp_tiled_height_resize(c, 0,
+            usable_col_h);
+        height_px -= floor_px;
+        double new_hf = floor_px / basis_h;
+        sway_log(SWAY_DEBUG, "[maximize]   win[%d] hf=%.3f -> %.3f "
+            "(floor_px=%.0f)", i, c->height_fraction, new_hf, floor_px);
+        c->height_fraction = new_hf;
+      }
+      focused_hf = height_px / basis_h;
+      sway_log(SWAY_DEBUG, "[maximize]   FOCUS win hf=%.3f (max px=%.0f)",
+          focused_hf, height_px);
+      con->height_fraction = focused_hf;
     }
     con->maximized = true;
     arrange_workspace(ws);
+    sway_log(SWAY_DEBUG, "[maximize] MAX result con pending=%dx%d @ %d,%d "
+        "col_pending=%dx%d (ws %dx%d)",
+        (int)con->pending.width, (int)con->pending.height,
+        (int)con->pending.x, (int)con->pending.y,
+        (int)col->pending.width, (int)col->pending.height,
+        ws->width, ws->height);
   } else {
+    sway_log(SWAY_DEBUG, "[maximize] restoring snapshot (%d entries)",
+        con->max_snapshot ? con->max_snapshot->length : 0);
     for (int i = 0; i < con->max_snapshot->length; i++) {
       struct maximize_snapshot *s = con->max_snapshot->items[i];
       s->con->width_fraction = s->wf;
@@ -482,6 +539,9 @@ void container_toggle_maximize(struct sway_container *con) {
     con->max_snapshot = NULL;
     con->maximized = false;
     arrange_workspace(ws);
+    sway_log(SWAY_DEBUG, "[maximize] RESTORE result con pending=%dx%d @ %d,%d",
+        (int)con->pending.width, (int)con->pending.height,
+        (int)con->pending.x, (int)con->pending.y);
   }
 
   container_arrange_title_bar(con);
@@ -1262,6 +1322,76 @@ void container_clamp_pixels(struct sway_container *con) {
 }
 
 /**
+ * Unified tiled min/max clamp. Enforces one consistent rule for both the
+ * resize primitives and the arrange passes (drag, keyboard, and layout then
+ * agree). `available` is the layout's upper bound (workspace width or column
+ * usable height).
+ */
+static double tiled_clamp_width_min(struct sway_container *con) {
+	struct sway_workspace *ws = con->pending.workspace;
+	double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN, cmax_h = DBL_MAX;
+	container_get_size_constraints(con, &cm_w, &cmax_w, &cm_h, &cmax_h);
+	double min_w = (cm_w != DBL_MIN) ? cm_w : 0;
+	if (ws && config->min_column_width_fraction > 0) {
+		min_w = fmax(min_w,
+			workspace_width_fraction(ws, config->min_column_width_fraction));
+	}
+	return min_w;
+}
+
+static double tiled_clamp_height_min(struct sway_container *con) {
+	double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN, cmax_h = DBL_MAX;
+	container_get_size_constraints(con, &cm_w, &cmax_w, &cm_h, &cmax_h);
+	// Arrange pass: only the view's own minimum. No MIN_SANE_H here, so an
+	// L_VERT column can compress small windows to fit instead of overflowing.
+	return (cm_h != DBL_MIN) ? cm_h : 0;
+}
+
+double container_clamp_tiled_width(struct sway_container *con, double desired,
+		double available) {
+	double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN, cmax_h = DBL_MAX;
+	container_get_size_constraints(con, &cm_w, &cmax_w, &cm_h, &cmax_h);
+	double lo = tiled_clamp_width_min(con);
+	double hi = (cmax_w != DBL_MAX) ? cmax_w : available;
+	double res = fmax(lo, fmin(desired, fmin(available, hi)));
+	sway_log(SWAY_DEBUG, "[clamp-w] con=%p desired=%.0f available=%.0f lo=%.0f "
+		"hi=%.0f -> %.0f", con, desired, available, lo, hi, res);
+	return res;
+}
+
+double container_clamp_tiled_height(struct sway_container *con, double desired,
+		double available) {
+	double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN, cmax_h = DBL_MAX;
+	container_get_size_constraints(con, &cm_w, &cmax_w, &cm_h, &cmax_h);
+	double lo = tiled_clamp_height_min(con);
+	double hi = (cmax_h != DBL_MAX) ? cmax_h : available;
+	double res = fmax(lo, fmin(desired, fmin(available, hi)));
+	sway_log(SWAY_DEBUG, "[clamp-h] con=%p desired=%.0f available=%.0f lo=%.0f "
+		"hi=%.0f -> %.0f", con, desired, available, lo, hi, res);
+	return res;
+}
+
+double container_clamp_tiled_width_min(struct sway_container *con) {
+	return tiled_clamp_width_min(con);
+}
+
+double container_clamp_tiled_height_min(struct sway_container *con) {
+	return tiled_clamp_height_min(con);
+}
+
+double container_clamp_tiled_height_resize(struct sway_container *con,
+		double desired, double available) {
+	double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN, cmax_h = DBL_MAX;
+	container_get_size_constraints(con, &cm_w, &cmax_w, &cm_h, &cmax_h);
+	double lo = (cm_h != DBL_MIN) ? cm_h : MIN_SANE_H;
+	double hi = (cmax_h != DBL_MAX) ? cmax_h : available;
+	double res = fmax(lo, fmin(desired, fmin(available, hi)));
+	sway_log(SWAY_DEBUG, "[clamp-h-resize] con=%p desired=%.0f available=%.0f "
+		"lo=%.0f hi=%.0f -> %.0f", con, desired, available, lo, hi, res);
+	return res;
+}
+
+/**
  * Clamp content-space dimensions (no borders) to the view's app-requested
  * constraints in place. Used by floating resize and as a final safety net in
  * view_autoconfigure.
@@ -2015,6 +2145,7 @@ void container_insert_child(struct sway_container *parent,
   container_for_each_child(child, set_workspace, NULL);
   container_handle_fullscreen_reparent(child);
   container_update_representation(parent);
+  container_fit_vertical_children(parent, child);
 }
 
 void container_add_sibling(struct sway_container *fixed,
@@ -2030,6 +2161,120 @@ void container_add_sibling(struct sway_container *fixed,
   container_for_each_child(active, set_workspace, NULL);
   container_handle_fullscreen_reparent(active);
   container_update_representation(active);
+  container_fit_vertical_children(active->pending.parent, active);
+}
+
+void container_fit_vertical_children(struct sway_container *col,
+		struct sway_container *new_child) {
+	if (!col || col->view || !col->pending.children) {
+		return;
+	}
+	if (col->pending.layout != L_VERT) {
+		return;
+	}
+	int n = col->pending.children->length;
+	if (n == 0) {
+		return;
+	}
+
+	struct sway_workspace *ws = col->pending.workspace;
+	double gap = ws ? ws->gaps_inner : 0;
+	double usable = col->pending.height;
+	if (usable > 0) {
+		usable -= gap * (n - 1);
+	}
+	if (usable <= 0) {
+		// Not arranged yet (e.g. a freshly created column): just give
+		// everyone an equal share.
+		double f = 1.0 / (double)n;
+		for (int i = 0; i < n; ++i) {
+			((struct sway_container *)col->pending.children->items[i])
+				->height_fraction = f;
+		}
+		return;
+	}
+
+	int new_idx = new_child ? list_find(col->pending.children, new_child)
+		: -1;
+	double *share = malloc(sizeof(double) * n);
+	double sum_old = 0;
+	for (int i = 0; i < n; ++i) {
+		struct sway_container *c = col->pending.children->items[i];
+		double s;
+		if (i == new_idx) {
+			s = 1.0 / (double)n; // equal default for the newcomer
+		} else if (c->pending.height > 0) {
+			s = c->pending.height / usable; // real current share
+		} else {
+			s = 1.0 / (double)(n - 1); // not yet arranged; treat equal
+		}
+		double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN,
+			cmax_h = DBL_MAX;
+		container_get_size_constraints(c, &cm_w, &cmax_w, &cm_h, &cmax_h);
+		double min_share = (cm_h != DBL_MIN) ? cm_h / usable : 0;
+		if (s < min_share) {
+			s = min_share;
+		}
+		share[i] = s;
+		sum_old += s;
+	}
+
+	// Carve out the new child's equal share, scaling the existing children
+	// down proportionally so their relative ratios are preserved.
+	double t_new = 1.0 / (double)n;
+	if (new_idx >= 0) {
+		struct sway_container *c = col->pending.children->items[new_idx];
+		double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN,
+			cmax_h = DBL_MAX;
+		container_get_size_constraints(c, &cm_w, &cmax_w, &cm_h, &cmax_h);
+		double min_share = (cm_h != DBL_MIN) ? cm_h / usable : 0;
+		if (t_new < min_share) {
+			t_new = min_share;
+		}
+	}
+	double S_old = sum_old - (new_idx >= 0 ? share[new_idx] : 0);
+	// Only scale the existing children down when the column is full; if there
+	// is free space, leave their current sizes alone (the arrange fills).
+	if (S_old > 1.0 - t_new && S_old > 0) {
+		double k = (1.0 - t_new) / S_old;
+		for (int i = 0; i < n; ++i) {
+			if (i == new_idx) {
+				continue;
+			}
+			share[i] *= k;
+		}
+	}
+	// Enforce each existing child's minimum; if one can't shrink far enough,
+	// the deficit is taken back out of the new child's share.
+	double deficit = 0;
+	for (int i = 0; i < n; ++i) {
+		if (i == new_idx) {
+			continue;
+		}
+		struct sway_container *c = col->pending.children->items[i];
+		double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN,
+			cmax_h = DBL_MAX;
+		container_get_size_constraints(c, &cm_w, &cmax_w, &cm_h, &cmax_h);
+		double min_share = (cm_h != DBL_MIN) ? cm_h / usable : 0;
+		if (min_share > 0 && share[i] < min_share) {
+			deficit += min_share - share[i];
+			share[i] = min_share;
+		}
+	}
+	if (deficit > 0 && new_idx >= 0) {
+		struct sway_container *c = col->pending.children->items[new_idx];
+		double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN,
+			cmax_h = DBL_MAX;
+		container_get_size_constraints(c, &cm_w, &cmax_w, &cm_h, &cmax_h);
+		double min_share = (cm_h != DBL_MIN) ? cm_h / usable : 0;
+		t_new = fmax(t_new - deficit, min_share);
+	}
+
+	for (int i = 0; i < n; ++i) {
+		struct sway_container *c = col->pending.children->items[i];
+		c->height_fraction = (i == new_idx) ? t_new : share[i];
+	}
+	free(share);
 }
 
 void container_add_child(struct sway_container *parent,
@@ -2045,6 +2290,7 @@ void container_add_child(struct sway_container *parent,
   container_update_representation(parent);
   node_set_dirty(&child->node);
   node_set_dirty(&parent->node);
+  container_fit_vertical_children(parent, child);
 }
 
 void container_detach(struct sway_container *child) {

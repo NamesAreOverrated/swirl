@@ -63,18 +63,17 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	// keeps every column at or above its view's minimum while still filling
 	// the workspace exactly, so the post-hoc clamp never has to mutate
 	// width_fraction (which previously caused a ratcheting overflow).
-	double cfg_min_px = workspace_width_fraction(ws,
-			config->min_column_width_fraction);
 	double *cmin = malloc(sizeof(double) * n);
 	double reserved = 0;
 	for (int i = 0; i < n; ++i) {
 		struct sway_container *col = ws->tiling->items[i];
-		double cm_w, cmax_w, cm_h, cmax_h;
-		container_get_size_constraints(col, &cm_w, &cmax_w, &cm_h, &cmax_h);
-		cmin[i] = fmax(cm_w, cfg_min_px);
+		cmin[i] = container_clamp_tiled_width_min(col);
 		reserved += cmin[i];
 	}
 	double remainder = child_total_width - reserved;
+	sway_log(SWAY_DEBUG, "[vlayout-h] ws=%p parent=%dx%d n=%d gaps=%d total_frac=%.3f "
+		"reserved=%.0f remainder=%.0f", ws, parent->width, parent->height, n,
+		gaps, total_frac, reserved, remainder);
 
 	double x = 0;
 	for (int i = 0; i < n; ++i) {
@@ -92,12 +91,15 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 		} else {
 			col->pending.width = fmax(0, parent->width - x);
 		}
-		// Safety net: honors the view's requested minimum. No-op once the
-		// reserve-then-distribute above already respected it. Uses the
-		// pixel-only clamp so the arrange pass does not rewrite width_fraction
-		// (which re-mapped it via a ws->width basis and caused width jitter).
-		container_clamp_pixels(col);
+		// Unified clamp: honors the view's min/max (and config min width) so
+		// the resize primitives and the arrange pass enforce identical rules.
+		// width_fraction is left as the user-intent value (not rewritten).
+		col->pending.width = container_clamp_tiled_width(col,
+				col->pending.width, parent->width);
 		node_set_dirty(&col->node);
+		sway_log(SWAY_DEBUG, "[vlayout-h]   col[%d] wf=%.3f cmin=%.0f -> "
+			"w=%.0f h=%.0f", i, frac, cmin[i], col->pending.width,
+			col->pending.height);
 
 		if (!col->view && col->pending.children) {
 			if (col->pending.layout == L_VERT) {
@@ -134,37 +136,82 @@ void viewport_arrange_windows(struct sway_container *col) {
 	}
 	double usable_h = fmax(0, col->pending.height - gap * (n - 1));
 
-	// Reserve each child's requested minimum height first, then distribute
-	// the remaining space in proportion to the children's height fractions.
-	// This keeps every child at or above its view's minimum while filling the
-	// column exactly, so height_fraction is never ratcheted by a post-hoc
-	// clamp. If the mins alone exceed the column, every child is pinned to
-	// its minimum (stable vertical overflow, no scroll).
+	// Split the usable column height by height fraction first, so a fraction
+	// is a true absolute-px share and a window can be driven all the way down
+	// to its view minimum (the old reserve-then-split rendered a floor of
+	// cmin + a fraction share, which stranded windows above their real min).
+	// Each child is then clamped to [min, max] and the resulting slack or
+	// demand is redistributed proportionally among the flexible children. If
+	// the mins alone overflow the column, every child is pinned to its
+	// minimum (stable vertical overflow, no scroll).
 	double *heights = malloc(sizeof(double) * n);
 	double *cmin_h = malloc(sizeof(double) * n);
-	double *cmax_h = malloc(sizeof(double) * n);
+	double *hi_h = malloc(sizeof(double) * n);
 	double reserved_h = 0;
 	for (int i = 0; i < n; ++i) {
 		struct sway_container *child = col->pending.children->items[i];
-		double mw, mx, mh, mxh;
-		container_get_size_constraints(child, &mw, &mx, &mh, &mxh);
-		cmin_h[i] = (mh != DBL_MIN) ? mh : 0;
-		cmax_h[i] = mxh;
+		cmin_h[i] = container_clamp_tiled_height_min(child);
+		hi_h[i] = container_clamp_tiled_height(child, usable_h, usable_h);
 		reserved_h += cmin_h[i];
 	}
-	double remainder_h = usable_h - reserved_h;
-	if (remainder_h < 0) {
-		remainder_h = 0;
-	}
+	sway_log(SWAY_DEBUG, "[vlayout-v] col=%p col_h=%.0f n=%d gap=%.0f usable_h=%.0f "
+		"total_hf=%.3f reserved_h=%.0f",
+		col, col->pending.height, n, gap, usable_h, total_hf, reserved_h);
 
-	for (int i = 0; i < n; ++i) {
-		struct sway_container *child = col->pending.children->items[i];
-		double hf = child->height_fraction > 0 ? child->height_fraction : 1.0;
-		double h = cmin_h[i] + remainder_h * (hf / total_hf);
-		if (cmax_h[i] != DBL_MAX) {
-			h = fmin(h, cmax_h[i]);
+	if (reserved_h > usable_h) {
+		for (int i = 0; i < n; ++i) {
+			heights[i] = cmin_h[i];
 		}
-		heights[i] = h;
+	} else {
+		double leftover = usable_h;
+		for (int i = 0; i < n; ++i) {
+			struct sway_container *child = col->pending.children->items[i];
+			double hf = child->height_fraction > 0 ? child->height_fraction : 1.0;
+			double raw = usable_h * (hf / total_hf);
+			heights[i] = container_clamp_tiled_height(child, raw, usable_h);
+			leftover -= heights[i];
+			sway_log(SWAY_DEBUG, "[vlayout-v]   win[%d] hf=%.3f raw=%.0f cmin=%.0f "
+				"-> %.0f", i, hf, raw, cmin_h[i], heights[i]);
+		}
+		// Redistribute: children that are not pinned to min/max absorb or shed
+		// the difference, weighted by their fractions. Two passes cover the
+		// realistic case where only real view min/max constraints clamp.
+		for (int pass = 0; pass < 2 && leftover != 0; ++pass) {
+			double flex_sum = 0;
+			for (int i = 0; i < n; ++i) {
+				struct sway_container *child = col->pending.children->items[i];
+				double hf = child->height_fraction > 0 ? child->height_fraction : 1.0;
+				bool flexible = (leftover > 0 && heights[i] < hi_h[i]) ||
+					(leftover < 0 && heights[i] > cmin_h[i]);
+				if (flexible) {
+					flex_sum += hf;
+				}
+			}
+			if (flex_sum <= 0) {
+				break;
+			}
+			for (int i = 0; i < n; ++i) {
+				struct sway_container *child = col->pending.children->items[i];
+				double hf = child->height_fraction > 0 ? child->height_fraction : 1.0;
+				if (leftover > 0 && heights[i] >= hi_h[i]) {
+					continue;
+				}
+				if (leftover < 0 && heights[i] <= cmin_h[i]) {
+					continue;
+				}
+				double want = heights[i] + leftover * (hf / flex_sum);
+				double next = container_clamp_tiled_height(child, want, usable_h);
+				leftover -= next - heights[i];
+				heights[i] = next;
+			}
+		}
+		// Exact fill: dump any sub-pixel remainder on the last child.
+		if (leftover != 0) {
+			struct sway_container *last = col->pending.children->items[n - 1];
+			double next = container_clamp_tiled_height(last,
+				heights[n - 1] + leftover, usable_h);
+			heights[n - 1] = next;
+		}
 	}
 
 	double y = 0;
@@ -176,12 +223,13 @@ void viewport_arrange_windows(struct sway_container *col) {
 		child->pending.y = col->pending.y + y;
 		child->pending.width = col->pending.width;
 		// Do NOT re-derive height_fraction here: the stored fraction is the
-		// authoritative user-intent value (set by the vertical resize
-		// primitive) and the distribute above already honors min/max via
-		// cmin_h/cmax_h. Re-deriving from pixels mixed a reserved-min part
-		// with a distributed part using the full workspace height as the
-		// denominator, which was lossy and drifted the ratio on every arrange
-		// pass (and only cancelled out at exactly 0.5/0.5).
+		// authoritative user-intent value (set by the resize primitive) and
+		// the distribute above already honors min/max via the unified
+		// container_clamp_tiled_height() clamp. Re-deriving from pixels mixed
+		// a reserved-min part with a distributed part using the full
+		// workspace height as the denominator, which was lossy and drifted
+		// the ratio on every arrange pass (and only cancelled out at exactly
+		// 0.5/0.5).
 		y += heights[i] + gap;
 		node_set_dirty(&child->node);
 
@@ -191,7 +239,7 @@ void viewport_arrange_windows(struct sway_container *col) {
 	}
 	free(heights);
 	free(cmin_h);
-	free(cmax_h);
+	free(hi_h);
 }
 
 void viewport_compute_offset(struct sway_workspace *ws,
@@ -373,13 +421,8 @@ void viewport_absorb_farthest(struct sway_workspace *ws,
 		candidates[farthest] = -1;  // mark used
 		struct sway_container *c = ws->tiling->items[idx];
 		double orig = c->pending.width;
-		double cmin_w, cmax_w, cmin_h, cmax_h;
-		container_get_size_constraints(c, &cmin_w, &cmax_w,
-				&cmin_h, &cmax_h);
-		double cfg_min_px = workspace_width_fraction(ws,
-				config->min_column_width_fraction);
-		double col_min_w = fmax(cmin_w, cfg_min_px);
-		double new_cw = fmax(col_min_w, orig - *remaining);
+		double new_cw = container_clamp_tiled_width(c,
+				orig - *remaining, ws->width);
 		double absorbed = orig - new_cw;
 		sway_log(SWAY_DEBUG, "[absorb]   col[%d]: %.4f -> %.4f (-%.4f) "
 			"remaining=%.4f", idx, orig, new_cw, absorbed,

@@ -74,17 +74,12 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		return;
 	}
 
-	double cfg_min_px = workspace_width_fraction(ws,
-			config->min_column_width_fraction);
-	double cmin_w, cmax_w, cmin_h, cmax_h;
-	container_get_size_constraints(col, &cmin_w, &cmax_w, &cmin_h, &cmax_h);
-	double min_col_w = fmax(cmin_w, cfg_min_px);
-
 	sway_log(SWAY_DEBUG, "[resize] con=%p col=%p col_idx=%d col_x=%.0f col_w=%.0f ws_width=%d vp_x=%.0f",
 		con, col, container_sibling_index(col),
 		col->pending.x, col->pending.width, ws->width, ws->viewport_x);
 
-	double new_w = fmax(min_col_w, fmin(col->pending.width + delta_px, ws->width));
+	double new_w = container_clamp_tiled_width(col,
+			col->pending.width + delta_px, ws->width);
 	double real_delta = new_w - col->pending.width;
 	sway_log(SWAY_DEBUG, "[resize] delta_px=%.0f new_w=%.0f real_delta=%.0f",
 		delta_px, new_w, real_delta);
@@ -154,14 +149,11 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		int edge_sib = (edge & WLR_EDGE_LEFT) ? col_idx - 1 : col_idx + 1;
 		for (int ci = 0; ci < n_candidates; ++ci) {
 			if (candidates[ci] == edge_sib) {
-				struct sway_container *c = ws->tiling->items[edge_sib];
-				double orig = c->pending.width;
-				double scmin_w, scmax_w, scmin_h, scmax_h;
-				container_get_size_constraints(c, &scmin_w, &scmax_w,
-						&scmin_h, &scmax_h);
-				double sib_min_w = fmax(scmin_w, cfg_min_px);
-				double new_cw = fmax(sib_min_w, orig - remaining);
-				double absorbed = orig - new_cw;
+			struct sway_container *c = ws->tiling->items[edge_sib];
+			double orig = c->pending.width;
+			double new_cw = container_clamp_tiled_width(c,
+					orig - remaining, ws->width);
+			double absorbed = orig - new_cw;
 				remaining -= absorbed;
 				sway_log(SWAY_DEBUG, "[resize]   edge-sib col[%d]: orig=%.0f new=%.0f absorbed=%.0f remaining=%.0f",
 					edge_sib, orig, new_cw, absorbed, remaining);
@@ -184,50 +176,142 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 	}
 
 	if (remaining > 0) {
-		sway_log(SWAY_DEBUG, "[resize]   cap growth: pull back by %.0f", remaining);
-		col->pending.width -= remaining;
+		sway_log(SWAY_DEBUG, "[resize-h]   cap growth: pull back by %.0f", remaining);
+		col->pending.width = container_clamp_tiled_width(col,
+				col->pending.width - remaining, ws->width);
 		col->width_fraction = workspace_width_to_fraction(ws, col->pending.width);
 		node_set_dirty(&col->node);
 	}
 
-	sway_log(SWAY_DEBUG, "[resize] arrange_workspace (remaining=%.0f)", remaining);
+	sway_log(SWAY_DEBUG, "[resize-h] FINAL col[%d] pending_w=%.0f wf=%.3f "
+		"(ws_width=%d remaining=%.0f)", col_idx, col->pending.width,
+		col->width_fraction, ws->width, remaining);
+
+	sway_log(SWAY_DEBUG, "[resize-h] arrange_workspace (remaining=%.0f)", remaining);
 	arrange_workspace(ws);
 }
 
 void tiled_resize_vertical_px(struct sway_container *con, uint32_t edge,
                                      double delta_px) {
-  struct sway_workspace *ws = con->pending.workspace;
-  if (!ws) {
+  struct sway_container *col = con->pending.parent;
+  while (col && col->pending.layout != L_VERT) {
+    col = col->pending.parent;
+  }
+  struct sway_workspace *ws = col ? col->pending.workspace : NULL;
+  if (!col || !ws || !col->pending.children) {
+    return;
+  }
+  list_t *siblings = col->pending.children;
+  int n = siblings->length;
+  int index = list_find(siblings, con);
+  if (n < 2 || index < 0) {
+    return;
+  }
+  double gap = ws->gaps_inner;
+  double usable = col->pending.height - gap * (n - 1);
+  if (usable <= 0) {
+    return;
+  }
+  sway_log(SWAY_DEBUG, "[resize-v] con=%p col=%p col_h=%.0f n=%d usable=%.0f "
+      "edge=0x%x focused_h=%.0f focused_hf=%.3f delta_px=%.0f",
+      con, col, col->pending.height, n, usable, edge,
+      con->pending.height, con->height_fraction, delta_px);
+
+  // Pure pixel arithmetic on the focused window's height; height_fraction is
+  // kept in sync as an absolute pixel cache (mirrors tiled_resize_horizontal_px
+  // so a keyboard press moves the focused window 1:1 with the requested px).
+  double new_h = container_clamp_tiled_height_resize(con,
+      con->pending.height + delta_px, usable);
+  double real_delta = new_h - con->pending.height;
+  sway_log(SWAY_DEBUG, "[resize-v] clamp(desired=%.0f, available=%.0f) -> "
+      "new_h=%.0f real_delta=%.0f", con->pending.height + delta_px,
+      usable, new_h, real_delta);
+  if (real_delta == 0) {
+    sway_log(SWAY_DEBUG, "[resize-v] ** real_delta == 0 (at floor/cap): "
+        "desired=%.0f pending=%.0f -> stuck, no space handed to siblings",
+        con->pending.height + delta_px, con->pending.height);
     return;
   }
 
-  list_t *siblings = container_get_siblings(con);
-  int index = container_sibling_index(con);
-  struct sway_container *sib = NULL;
-  if ((edge & (WLR_EDGE_TOP | WLR_EDGE_BOTTOM)) && siblings &&
-      siblings->length > 1) {
-    int sib_idx = index + ((edge & WLR_EDGE_BOTTOM) ? 1 : -1);
-    if (sib_idx >= 0 && sib_idx < siblings->length) {
-      sib = siblings->items[sib_idx];
-    }
+  // The column always fills its height, so growing the focused window takes
+  // space from the other windows and shrinking gives it back to them.
+  // remaining: for a grow this is how much the siblings must donate once the
+  // column is full; for a shrink it is the (negative) freed space siblings
+  // are due to receive.
+  double occupied = 0;
+  for (int i = 0; i < n; ++i) {
+    occupied += ((struct sway_container *)siblings->items[i])->pending.height;
   }
+  double remaining;
+  if (real_delta < 0) {
+    remaining = real_delta;
+  } else {
+    remaining = fmax(0, occupied + real_delta - usable);
+  }
+  sway_log(SWAY_DEBUG, "[resize-v] occupied(win heights)=%.0f -> remaining=%.0f",
+      occupied, remaining);
 
-  double cmin_w, cmax_w, cmin_h, cmax_h;
-  container_get_size_constraints(con, &cmin_w, &cmax_w, &cmin_h, &cmax_h);
-  double con_min_h = (cmin_h != DBL_MIN) ? cmin_h : MIN_SANE_H;
-  double new_h = fmax(con_min_h, con->pending.height + delta_px);
   con->pending.height = new_h;
   con->height_fraction = workspace_height_to_fraction(ws, new_h);
   node_set_dirty(&con->node);
 
-  if (sib) {
-    double smin_w, smax_w, smin_h, smax_h;
-    container_get_size_constraints(sib, &smin_w, &smax_w, &smin_h, &smax_h);
-    double sib_min_h = (smin_h != DBL_MIN) ? smin_h : MIN_SANE_H;
-    double new_sh = fmax(sib_min_h, sib->pending.height - delta_px);
-    sib->pending.height = new_sh;
-    sib->height_fraction = workspace_height_to_fraction(ws, new_sh);
+  // Absorption order: edge-adjacent sibling first for an explicit edge (mouse
+  // border drag), otherwise farthest-from-focus first (keyboard), mirroring
+  // viewport_absorb_farthest.
+  int order[64];
+  int no = 0;
+  if (edge & (WLR_EDGE_TOP | WLR_EDGE_BOTTOM)) {
+    int adj = index + ((edge & WLR_EDGE_BOTTOM) ? 1 : -1);
+    if (adj >= 0 && adj < n && adj != index) {
+      order[no++] = adj;
+    }
   }
+  for (int d = n - 1; d >= 1; --d) {
+    for (int dir = -1; dir <= 1; dir += 2) {
+      int k = index + dir * d;
+      if (k < 0 || k >= n || k == index) {
+        continue;
+      }
+      bool already = false;
+      for (int j = 0; j < no; ++j) {
+        if (order[j] == k) {
+          already = true;
+          break;
+        }
+      }
+      if (!already) {
+        order[no++] = k;
+      }
+    }
+  }
+
+  for (int j = 0; j < no && remaining != 0; ++j) {
+    struct sway_container *c = siblings->items[order[j]];
+    double orig = c->pending.height;
+    double new_sh = container_clamp_tiled_height_resize(c,
+        orig - remaining, usable);
+    double absorbed = orig - new_sh;
+    c->pending.height = new_sh;
+    c->height_fraction = workspace_height_to_fraction(ws, new_sh);
+    node_set_dirty(&c->node);
+    remaining -= absorbed;
+    sway_log(SWAY_DEBUG, "[resize-v]   sib[%d]: %.0f -> %.0f (absorbed=%.0f) "
+        "remaining=%.0f", order[j], orig, new_sh, absorbed, remaining);
+  }
+
+  // If the siblings (at their floors) could not donate the full amount, pull
+  // the focused growth back so the column stays within bounds.
+  if (remaining > 0) {
+    con->pending.height = container_clamp_tiled_height_resize(con,
+        con->pending.height - remaining, usable);
+    con->height_fraction = workspace_height_to_fraction(ws, con->pending.height);
+    node_set_dirty(&con->node);
+    sway_log(SWAY_DEBUG, "[resize-v]   cap growth: pull back to %.0f",
+        con->pending.height);
+  }
+
+  sway_log(SWAY_DEBUG, "[resize-v] FINAL focused_h=%.0f remaining=%.0f",
+      con->pending.height, remaining);
 
   arrange_workspace(ws);
 }
@@ -240,21 +324,31 @@ static void tiled_resize_horizontal_frac(struct sway_container *con,
     return;
   }
   double new_frac = col->width_fraction + delta_frac;
-  new_frac = fmax(0.05, fmin(1.0, new_frac));
+  new_frac = fmax(0.05, new_frac);
   double delta_px = workspace_width_fraction(ws, new_frac) - col->pending.width;
   tiled_resize_horizontal_px(con, WLR_EDGE_NONE, delta_px);
 }
 
 static void tiled_resize_vertical_frac(struct sway_container *con,
-                                       double delta_frac) {
-  struct sway_workspace *ws = con->pending.workspace;
-  if (!ws) {
+                                        double delta_frac) {
+  struct sway_container *col = container_toplevel_ancestor(con);
+  struct sway_workspace *ws = col ? col->pending.workspace : NULL;
+  if (!col || !ws) {
     return;
   }
   double new_frac = con->height_fraction + delta_frac;
-  new_frac = fmax(0.05, fmin(1.0, new_frac));
-  double delta_px =
-      workspace_height_fraction(ws, new_frac) - con->pending.height;
+  double pre_floor_frac = new_frac;
+  // No fraction floor above the px floor: the px path clamps to the window's
+  // real minimum (view min or MIN_SANE_H), so a window can shrink all the way
+  // down and hand its space to the siblings. A sliver guards against a 0.0
+  // fraction (which the arrange would treat as "no fraction").
+  new_frac = fmax(0.001, new_frac);
+  double desired_px = workspace_height_fraction(ws, new_frac);
+  double delta_px = desired_px - con->pending.height;
+  sway_log(SWAY_DEBUG, "[resize-frac-v] hf=%.3f delta_frac=%.3f "
+      "new_frac=%.3f(pre-floor) -> %.3f desired_px=%.0f pending_h=%.0f "
+      "delta_px=%.0f", con->height_fraction, delta_frac, pre_floor_frac,
+      new_frac, desired_px, con->pending.height, delta_px);
   tiled_resize_vertical_px(con, WLR_EDGE_NONE, delta_px);
 }
 
