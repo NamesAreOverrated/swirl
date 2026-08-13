@@ -354,9 +354,10 @@ void workspace_minimized_show(struct sway_container *con) {
 		container_fullscreen_disable(root->fullscreen_global);
 	}
 
-	// Respect the focused workspace's floating mode, falling back to the
-	// window's own mode when it was minimized.
-	if (new_ws->default_float || con->minimized_was_floating) {
+	// Ignore the focused workspace's floating mode and restore the window in
+	// the mode it had when it was minimized (tiled -> tiled, floating ->
+	// floating). default_float only gates newly mapped windows.
+	if (con->minimized_was_floating) {
 		if (con->view) {
 			view_set_tiled(con->view, false);
 		}

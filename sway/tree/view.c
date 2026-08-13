@@ -854,6 +854,7 @@ static void handle_foreign_minimize_request(
 	} else if (top->minimized) {
 		workspace_minimized_show(top);
 	}
+	transaction_commit_dirty();
 }
 
 static void handle_foreign_maximize_request(
