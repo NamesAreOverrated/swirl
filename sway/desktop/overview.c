@@ -20,11 +20,14 @@
 #include "sway/server.h"
 #include "sway/tree/container.h"
 #include "sway/tree/root.h"
+#include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
 
 struct overview_state overview_state;
 
 static bool overview_active = false;
+
+static void overview_layout_grid(struct sway_output *output);
 
 bool overview_is_active(void) { return overview_active; }
 
@@ -146,6 +149,44 @@ static struct overview_thumbnail *overview_thumbnail_at(double x, double y) {
   return NULL;
 }
 
+// Close the window(s) a thumbnail represents (same semantics as cmd_kill:
+// the view itself plus every view nested below it, e.g. a whole column).
+static void overview_close_view_iterator(struct sway_container *con,
+    void *data) {
+  if (con->view) {
+    view_close(con->view);
+  }
+}
+
+// Middle-click handler: close the window and drop its thumbnail from the
+// live grid, reflowing the survivors so the overview stays open for closing
+// several windows in one session.
+static void overview_close_thumbnail(struct overview_thumbnail *t,
+    struct sway_output *output) {
+  struct sway_container *con = t->con;
+  overview_close_view_iterator(con, NULL);
+  container_for_each_child(con, overview_close_view_iterator, NULL);
+
+  if (t->sb) {
+    wlr_scene_node_destroy(&t->sb->node);
+  }
+  if (t->badge_sb) {
+    wlr_scene_node_destroy(&t->badge_sb->node);
+  }
+  wl_list_remove(&t->link);
+  free(t);
+  overview_state.n_thumbnails--;
+
+  if (overview_state.hover_rect) {
+    wlr_scene_node_set_enabled(&overview_state.hover_rect->node, false);
+  }
+  overview_layout_grid(output);
+
+  // Closing the focused window can move focus; refresh the stored con so the
+  // digit/swap paths never dereference a freed container.
+  overview_state.focus_con = seat_get_focused_container(overview_state.seat);
+}
+
 void overview_handle_button(struct sway_seat *seat, uint32_t button,
     bool pressed) {
   if (!pressed)
@@ -154,15 +195,25 @@ void overview_handle_button(struct sway_seat *seat, uint32_t button,
     overview_toggle();
     return;
   }
-  if (button != BTN_LEFT)
+  if (button != BTN_LEFT && button != BTN_MIDDLE)
     return;
   double cx = seat->cursor->cursor->x;
   double cy = seat->cursor->cursor->y;
   struct overview_thumbnail *t = overview_thumbnail_at(cx, cy);
-  if (t) {
-    overview_dispatch_action(t);
-    overview_toggle();
+  if (!t)
+    return;
+  if (button == BTN_MIDDLE) {
+    struct sway_output *output = NULL;
+    if (root && root->outputs && root->outputs->length > 0) {
+      output = root->outputs->items[0];
+    }
+    if (output) {
+      overview_close_thumbnail(t, output);
+    }
+    return;
   }
+  overview_dispatch_action(t);
+  overview_toggle();
 }
 
 void overview_handle_motion(struct sway_seat *seat) {
