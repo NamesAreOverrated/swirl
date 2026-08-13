@@ -15,6 +15,7 @@
 #include "sway/server.h"
 #include "sway/scene_descriptor.h"
 #include "sway/tree/container.h"
+#include "sway/tree/root.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
 #include "log.h"
@@ -363,10 +364,10 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 		find_resize_edge(cont, surface, cursor) : WLR_EDGE_NONE;
 	bool on_border = edge != WLR_EDGE_NONE;
 	bool on_contents = cont && !on_border && surface;
-	bool on_workspace = node && node->type == N_WORKSPACE;
-	bool on_titlebar = cont && !on_border && !surface;
+  bool on_workspace = node && node->type == N_WORKSPACE;
+  bool on_titlebar = cont && !on_border && !surface;
 
-	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat->wlr_seat);
+  struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat->wlr_seat);
 	uint32_t modifiers = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 
 	bool mod_pressed = modifiers & config->floating_mod;
@@ -376,13 +377,45 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 	bool mod_resize_btn_pressed = mod_pressed && button == mod_resize_btn;
 	bool titlebar_left_btn_pressed = on_titlebar && button == BTN_LEFT;
 
-	// Handle mouse bindings
-	if (trigger_pointer_button_binding(seat, device, button, state, modifiers,
-			on_titlebar, on_border, on_contents, on_workspace)) {
-		return;
-	}
+  // Handle mouse bindings
+  if (trigger_pointer_button_binding(seat, device, button, state, modifiers,
+      on_titlebar, on_border, on_contents, on_workspace)) {
+    return;
+  }
 
-	// Handle clicking an empty workspace
+  // Handle titlebar control buttons (minimize / maximize / close).
+  // Gate on the container + button only; titlebar_button_at() precisely
+  // decides whether the click landed on a button, so this works regardless
+  // of layout (tiled/tabbed/stacked/floating) and independent of the
+  // on_titlebar/on_border flags (which misclassify tabbed/stacked titlebars
+  // as borders).
+  if (cont && button == BTN_LEFT &&
+      state == WL_POINTER_BUTTON_STATE_PRESSED) {
+    // The buttons are children of cont->title_bar.tree; get that tree's true
+    // absolute position from the scene graph so the click coordinate is
+    // relative to the title bar in every layout without manual math.
+    int tx = 0, ty = 0;
+    wlr_scene_node_coords(&cont->title_bar.tree->node, &tx, &ty);
+    double lx = cursor->cursor->x - tx;
+    double ly = cursor->cursor->y - ty;
+    enum titlebar_button tb = titlebar_button_at(cont, lx, ly);
+    if (tb != TB_NONE) {
+      seat_set_focus_container(seat, cont);
+      if (tb == TB_MINIMIZE) {
+        root_minimize_container(container_toplevel_ancestor(cont));
+      } else if (tb == TB_MAXIMIZE) {
+        container_toggle_maximize(cont);
+      } else if (tb == TB_CLOSE) {
+        if (cont->view) {
+          view_close(cont->view);
+        }
+      }
+      transaction_commit_dirty();
+      return;
+    }
+  }
+
+  // Handle clicking an empty workspace
 	if (node && node->type == N_WORKSPACE && surface == NULL) {
 		if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
 			seat_set_focus(seat, node);

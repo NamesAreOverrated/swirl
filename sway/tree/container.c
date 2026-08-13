@@ -375,6 +375,14 @@ void container_update(struct sway_container *con) {
     sway_text_node_set_background(con->title_bar.marks_text,
                                   colors->background);
   }
+
+  if (con->pending.border == B_NORMAL) {
+    for (int i = 0; i < 3; i++) {
+      if (con->title_bar.button_glyph[i]) {
+        sway_text_node_set_color(con->title_bar.button_glyph[i], colors->text);
+      }
+    }
+  }
 }
 
 void container_update_itself_and_parents(struct sway_container *con) {
@@ -383,6 +391,115 @@ void container_update_itself_and_parents(struct sway_container *con) {
   if (con->current.parent) {
     container_update_itself_and_parents(con->current.parent);
   }
+}
+
+struct maximize_snapshot {
+  struct sway_container *con;
+  double wf;
+  double hf;
+};
+
+void container_toggle_maximize(struct sway_container *con) {
+  if (!con) {
+    return;
+  }
+
+  if (container_is_floating(con)) {
+    if (!con->maximized) {
+      con->saved_x = con->pending.x;
+      con->saved_y = con->pending.y;
+      con->saved_width = con->pending.width;
+      con->saved_height = con->pending.height;
+      struct sway_workspace *ws = con->pending.workspace;
+      if (ws) {
+        con->pending.x = ws->x;
+        con->pending.y = ws->y;
+        con->pending.width = ws->width;
+        con->pending.height = ws->height;
+      }
+      con->maximized = true;
+      arrange_container(con);
+    } else {
+      con->pending.x = con->saved_x;
+      con->pending.y = con->saved_y;
+      con->pending.width = con->saved_width;
+      con->pending.height = con->saved_height;
+      con->maximized = false;
+      arrange_container(con);
+    }
+    container_arrange_title_bar(con);
+    return;
+  }
+
+  struct sway_container *col = container_toplevel_ancestor(con);
+  struct sway_workspace *ws = col ? col->pending.workspace : NULL;
+  if (!ws) {
+    return;
+  }
+
+  if (!con->maximized) {
+    con->max_snapshot = create_list();
+    for (int i = 0; i < ws->tiling->length; i++) {
+      struct sway_container *c = ws->tiling->items[i];
+      struct maximize_snapshot *s = malloc(sizeof(*s));
+      s->con = c;
+      s->wf = c->width_fraction;
+      s->hf = c->height_fraction;
+      list_add(con->max_snapshot, s);
+    }
+    for (int i = 0; i < col->pending.children->length; i++) {
+      struct sway_container *c = col->pending.children->items[i];
+      struct maximize_snapshot *s = malloc(sizeof(*s));
+      s->con = c;
+      s->wf = c->width_fraction;
+      s->hf = c->height_fraction;
+      list_add(con->max_snapshot, s);
+    }
+
+    double min_wf = config->min_column_width_fraction > 0
+        ? config->min_column_width_fraction : 0.05;
+    double min_hf = workspace_height_to_fraction(ws, MIN_SANE_H);
+    for (int i = 0; i < ws->tiling->length; i++) {
+      struct sway_container *c = ws->tiling->items[i];
+      c->width_fraction = (c == col) ? 1.0 : min_wf;
+    }
+    for (int i = 0; i < col->pending.children->length; i++) {
+      struct sway_container *c = col->pending.children->items[i];
+      c->height_fraction = (c == con) ? 1.0 : min_hf;
+    }
+    con->maximized = true;
+    arrange_workspace(ws);
+  } else {
+    for (int i = 0; i < con->max_snapshot->length; i++) {
+      struct maximize_snapshot *s = con->max_snapshot->items[i];
+      s->con->width_fraction = s->wf;
+      s->con->height_fraction = s->hf;
+    }
+    for (int i = 0; i < con->max_snapshot->length; i++) {
+      free(con->max_snapshot->items[i]);
+    }
+    list_free(con->max_snapshot);
+    con->max_snapshot = NULL;
+    con->maximized = false;
+    arrange_workspace(ws);
+  }
+
+  container_arrange_title_bar(con);
+}
+
+enum titlebar_button titlebar_button_at(struct sway_container *con,
+    double lx, double ly) {
+  if (lx < 0 || ly < 0) {
+    return TB_NONE;
+  }
+  for (int i = 0; i < 3; i++) {
+    struct wlr_box *b = &con->title_bar.button_box[i];
+    if (lx >= b->x && lx <= b->x + b->width &&
+        ly >= b->y && ly <= b->y + b->height) {
+      return (enum titlebar_button)i;
+    }
+  }
+  return TB_NONE;
 }
 
 static void update_rect_list(struct wlr_scene_tree *tree,
@@ -415,6 +532,25 @@ void container_arrange_title_bar(struct sway_container *con) {
   int width = con->title_width;
   int height = container_titlebar_height();
 
+  // Ensure the control buttons exist for decorated views even if
+  // container_update_title_bar hasn't run yet. They are created as children of
+  // the title bar tree alongside the title text, and only for real views.
+  if (con->view && con->pending.border == B_NORMAL) {
+    struct border_colors *c = container_get_current_colors(con);
+    static const char *init_glyph[3] = {"\u2014", "\u25a2", "\u2715"};
+    for (int i = 0; i < 3; i++) {
+      if (!con->title_bar.button_glyph[i]) {
+        con->title_bar.button_glyph[i] = sway_text_node_create(
+            con->title_bar.tree, (char *)init_glyph[i], c->text, false);
+      }
+    }
+  }
+
+  bool has_buttons = con->pending.border == B_NORMAL &&
+      con->title_bar.button_glyph[0] != NULL;
+  int reserved = has_buttons ? 3 * height : 0;
+  int right_edge = width - reserved;
+
   pixman_region32_t text_area;
   pixman_region32_init(&text_area);
 
@@ -426,13 +562,13 @@ void container_arrange_title_bar(struct sway_container *con) {
     if (title_align == ALIGN_RIGHT) {
       h_padding = config->titlebar_h_padding;
     } else {
-      h_padding = width - config->titlebar_h_padding - marks_buffer_width;
+      h_padding = right_edge - config->titlebar_h_padding - marks_buffer_width;
     }
 
     h_padding = MAX(h_padding, config->titlebar_h_padding);
 
     int alloc_width =
-        MIN((int)node->width, width - h_padding - config->titlebar_h_padding);
+        MIN((int)node->width, right_edge - h_padding - config->titlebar_h_padding);
     alloc_width = MAX(alloc_width, 0);
 
     sway_text_node_set_max_width(node, alloc_width);
@@ -448,9 +584,9 @@ void container_arrange_title_bar(struct sway_container *con) {
 
     int h_padding;
     if (title_align == ALIGN_RIGHT) {
-      h_padding = width - config->titlebar_h_padding - node->width;
+      h_padding = right_edge - config->titlebar_h_padding - node->width;
     } else if (title_align == ALIGN_CENTER) {
-      h_padding = ((int)width - marks_buffer_width - node->width) >> 1;
+      h_padding = ((int)right_edge - marks_buffer_width - node->width) >> 1;
     } else {
       h_padding = config->titlebar_h_padding;
     }
@@ -458,7 +594,7 @@ void container_arrange_title_bar(struct sway_container *con) {
     h_padding = MAX(h_padding, config->titlebar_h_padding);
 
     int alloc_width =
-        MIN((int)node->width, width - h_padding - config->titlebar_h_padding);
+        MIN((int)node->width, right_edge - h_padding - config->titlebar_h_padding);
     alloc_width = MAX(alloc_width, 0);
 
     sway_text_node_set_max_width(node, alloc_width);
@@ -491,6 +627,40 @@ void container_arrange_title_bar(struct sway_container *con) {
 
   update_rect_list(con->title_bar.border, &border);
   pixman_region32_fini(&border);
+
+  // Titlebar buttons (minimize / maximize / close). Only drawn for real
+  // server-side decoration bars so CSD/pixel-bordered views stay untouched.
+  if (has_buttons) {
+    struct border_colors *colors = container_get_current_colors(con);
+    const char *glyph[3] = {"\u2014",
+        con->maximized ? "\u25a3" : "\u25a2", "\u2715"};
+    int btn = height;  // square, full titlebar height
+    for (int i = 0; i < 3; i++) {
+      int bx = width - (3 - i) * btn;
+      struct wlr_box *box = &con->title_bar.button_box[i];
+      box->x = bx;
+      box->y = 0;
+      box->width = btn;
+      box->height = height;
+
+      if (con->title_bar.button_glyph[i]) {
+        sway_text_node_set_text(con->title_bar.button_glyph[i], (char *)glyph[i]);
+        sway_text_node_set_color(con->title_bar.button_glyph[i], colors->text);
+        int gx = bx + (btn - con->title_bar.button_glyph[i]->width) / 2;
+        int gy = (height - con->title_bar.button_glyph[i]->height) / 2;
+        wlr_scene_node_set_position(con->title_bar.button_glyph[i]->node, gx, gy);
+        wlr_scene_node_set_enabled(con->title_bar.button_glyph[i]->node, true);
+      }
+    }
+  } else {
+    for (int i = 0; i < 3; i++) {
+      con->title_bar.button_box[i].width = 0;
+      con->title_bar.button_box[i].height = 0;
+      if (con->title_bar.button_glyph[i]) {
+        wlr_scene_node_set_enabled(con->title_bar.button_glyph[i]->node, false);
+      }
+    }
+  }
 
   container_update(con);
 }
@@ -565,6 +735,24 @@ void container_update_title_bar(struct sway_container *con) {
     con->title_bar.marks_text = NULL;
   }
 
+  // Titlebar control buttons (minimize / maximize / close). Created as
+  // children of the title bar tree like the title text, and only for real
+  // server-side decorated views (con->view != NULL), so split/column
+  // titlebars from stock sway are left untouched and free of buttons.
+  static const char *init_glyph[3] = {"\u2014", "\u25a2", "\u2715"};
+  for (int i = 0; i < 3; i++) {
+    if (con->title_bar.button_glyph[i]) {
+      wlr_scene_node_destroy(con->title_bar.button_glyph[i]->node);
+      con->title_bar.button_glyph[i] = NULL;
+    }
+  }
+  if (con->view && con->pending.border == B_NORMAL) {
+    for (int i = 0; i < 3; i++) {
+      con->title_bar.button_glyph[i] = sway_text_node_create(
+          con->title_bar.tree, (char *)init_glyph[i], colors->text, false);
+    }
+  }
+
   container_update_marks(con);
   container_arrange_title_bar(con);
 }
@@ -587,6 +775,13 @@ void container_destroy(struct sway_container *con) {
   list_free(con->current.children);
 
   list_free_items_and_destroy(con->marks);
+
+  if (con->max_snapshot) {
+    for (int i = 0; i < con->max_snapshot->length; i++) {
+      free(con->max_snapshot->items[i]);
+    }
+    list_free(con->max_snapshot);
+  }
 
   if (con->view && con->view->container == con) {
     con->view->container = NULL;

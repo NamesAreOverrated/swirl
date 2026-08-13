@@ -65,6 +65,13 @@ struct sway_container_state {
   double content_width, content_height;
 };
 
+enum titlebar_button {
+  TB_NONE = -1,
+  TB_MINIMIZE = 0,
+  TB_MAXIMIZE = 1,
+  TB_CLOSE = 2,
+};
+
 struct sway_container {
   struct sway_node node;
   struct sway_view *view;
@@ -79,6 +86,9 @@ struct sway_container {
 
     struct sway_text_node *title_text;
     struct sway_text_node *marks_text;
+
+    struct sway_text_node *button_glyph[3];
+    struct wlr_box button_box[3];
   } title_bar;
 
   struct {
@@ -135,6 +145,12 @@ struct sway_container {
   // Whether the container was floating when it was minimized. Used to honor
   // the window's original mode when calling it out.
   bool minimized_was_floating;
+
+  // Maximize state (driven by the titlebar button). For tiled containers
+  // max_snapshot holds saved fractions; for floating containers the original
+  // geometry is stashed in saved_x/y/width/height.
+  bool maximized;
+  list_t *max_snapshot;
 
   // Stores last output size and position for adjusting coordinates of
   // scratchpad windows.
@@ -296,6 +312,20 @@ bool container_has_urgent_child(struct sway_container *container);
  * ends the operation.
  */
 void container_end_mouse_operation(struct sway_container *container);
+
+/**
+ * Toggle maximize for the given container (titlebar button). Tiled containers
+ * grow to the largest size the tile layout allows (siblings keep their
+ * minimums); floating containers are resized to fill the workspace.
+ */
+void container_toggle_maximize(struct sway_container *con);
+
+/**
+ * Returns which titlebar button (if any) contains the given point, expressed
+ * in container-local titlebar coordinates.
+ */
+enum titlebar_button titlebar_button_at(struct sway_container *con,
+    double lx, double ly);
 
 void container_set_fullscreen(struct sway_container *con,
                               enum sway_fullscreen_mode mode);
