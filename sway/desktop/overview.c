@@ -433,18 +433,20 @@ static void overview_collect(struct sway_container *con,
                              struct wlr_allocator *alloc,
                              const struct wlr_drm_format *fmt,
                              float scale, int bt, int *idx) {
-  if (con->view) {
-    if (con->view->saved_buffer) {
-      (*idx)++;
-      overview_thumbnail_create(con, ws, output, active_ws,
-                                renderer, alloc, fmt, scale, bt, *idx);
+  // One tile per top-level container (column), so t->con is always a column
+  // and t->ws is always set — consistent with the minimize model. Leaf view
+  // containers still get their own tile.
+  if (!con->view) {
+    if (overview_thumbnail_create(con, ws, output, active_ws,
+                                  renderer, alloc, fmt, scale, bt, *idx + 1)) {
+      *idx = *idx + 1;
     }
     return;
   }
-  for (int i = 0; i < con->current.children->length; i++) {
-    overview_collect(con->current.children->items[i],
-                     ws, output, active_ws,
-                     renderer, alloc, fmt, scale, bt, idx);
+  if (con->view->saved_buffer) {
+    (*idx)++;
+    overview_thumbnail_create(con, ws, output, active_ws,
+                              renderer, alloc, fmt, scale, bt, *idx);
   }
 }
 
@@ -478,40 +480,58 @@ void overview_set_params(enum overview_scope scope,
 
 
 static void overview_action_focus(struct overview_thumbnail *t) {
-  if (t->ws != output_get_active_workspace(root->outputs->items[0])) {
+  if (!t || !t->con)
+    return;
+  struct sway_container *target = container_toplevel_ancestor(t->con);
+  if (t->ws && t->ws != output_get_active_workspace(root->outputs->items[0])) {
     workspace_switch(t->ws);
   }
-  seat_set_focus_container(state.seat, t->con);
+  seat_set_focus_container(state.seat, target);
+  transaction_commit_dirty();
 }
 
 static void overview_action_pull(struct overview_thumbnail *t) {
+  if (!t || !t->con)
+    return;
+  struct sway_container *target_col = container_toplevel_ancestor(t->con);
   struct sway_container *focus = state.focus_con;
   struct sway_workspace *active_ws = output_get_active_workspace(root->outputs->items[0]);
+  if (!focus) {
+    seat_set_focus_container(state.seat, target_col);
+    transaction_commit_dirty();
+    return;
+  }
   struct sway_container *focus_col = container_toplevel_ancestor(focus);
-  struct sway_container *target_col = container_toplevel_ancestor(t->con);
   if (focus_col != target_col) {
     int fi = list_find(active_ws->tiling, focus_col);
     if (fi >= 0) {
       workspace_pull_column(active_ws, target_col, fi + 1);
     }
   }
-  seat_set_focus_container(state.seat, t->con);
+  seat_set_focus_container(state.seat, target_col);
+  transaction_commit_dirty();
 }
 
 static void overview_action_swap(struct overview_thumbnail *t) {
-  struct sway_container *focus = state.focus_con;
-  struct sway_container *focus_col = container_toplevel_ancestor(focus);
+  if (!t || !t->con)
+    return;
   struct sway_container *target_col = container_toplevel_ancestor(t->con);
+  struct sway_container *focus = state.focus_con;
+  if (!focus) {
+    seat_set_focus_container(state.seat, target_col);
+    return;
+  }
+  struct sway_container *focus_col = container_toplevel_ancestor(focus);
   if (focus_col != target_col) {
     workspace_swap_columns(focus_col, target_col);
-    seat_set_focus_raw(state.seat, &t->con->node);
+    seat_set_focus_raw(state.seat, &target_col->node);
     struct sway_workspace *ws_a = focus_col->pending.workspace;
     struct sway_workspace *ws_b = target_col->pending.workspace;
     arrange_workspace(ws_a);
     if (ws_b != ws_a) arrange_workspace(ws_b);
     transaction_commit_dirty();
   } else {
-    seat_set_focus_container(state.seat, t->con);
+    seat_set_focus_container(state.seat, target_col);
   }
 }
 
@@ -551,7 +571,20 @@ void overview_handle_button(struct sway_seat *seat, uint32_t button,
   double cy = seat->cursor->cursor->y;
   struct overview_thumbnail *t = overview_thumbnail_at(cx, cy);
   if (t) {
-    overview_action_restore(t);
+    switch (state.action) {
+    case OVERVIEW_FOCUS:
+      overview_action_focus(t);
+      break;
+    case OVERVIEW_PULL:
+      overview_action_pull(t);
+      break;
+    case OVERVIEW_SWAP:
+      overview_action_swap(t);
+      break;
+    case OVERVIEW_RESTORE:
+      overview_action_restore(t);
+      break;
+    }
     overview_toggle();
   }
 }
