@@ -428,6 +428,7 @@ void container_toggle_maximize(struct sway_container *con) {
       arrange_container(con);
     }
     container_arrange_title_bar(con);
+    view_container_set_foreign_maximized(con, con->maximized);
     return;
   }
 
@@ -516,6 +517,7 @@ void container_toggle_maximize(struct sway_container *con) {
   }
 
   container_arrange_title_bar(con);
+  view_container_set_foreign_maximized(con, con->maximized);
 }
 
 enum titlebar_button titlebar_button_at(struct sway_container *con,

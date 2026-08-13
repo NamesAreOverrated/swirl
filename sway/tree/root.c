@@ -12,6 +12,7 @@
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
 #include "sway/tree/root.h"
+#include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
 #include "list.h"
 #include "log.h"
@@ -250,6 +251,11 @@ void root_minimize_container(struct sway_container *con) {
 	struct sway_container *parent = con->pending.parent;
 
 	con->minimized_was_floating = container_is_floating(con);
+	// Mark minimized *before* reparenting the scene node to the staging tree:
+	// the reparent drops the node from all outputs, and handle_outputs_update
+	// must keep the toplevel's output association (for taskbars) once the
+	// window is minimized.
+	con->minimized = true;
 	// Reparent the scene node to the staging tree *before* detaching so that
 	// reaping the now-empty parent column (a lone tiling window) cannot
 	// destroy it. Otherwise the minimized view's scene node is freed along
@@ -263,7 +269,6 @@ void root_minimize_container(struct sway_container *con) {
 	if (parent) {
 		container_reap_empty(parent);
 	}
-	con->minimized = true;
 	// Park it in the source workspace's per-workspace pool so the per-workspace
 	// overview can scope minimized windows correctly.
 	if (ws) {
@@ -283,6 +288,7 @@ void root_minimize_container(struct sway_container *con) {
 	if (ws && !ws->node.destroying) {
 		ipc_event_workspace(ws, ws, "minimized");
 	}
+	view_container_set_foreign_minimized(con, true);
 }
 
 static struct sway_workspace *minimized_scan(list_t *workspaces,
@@ -381,6 +387,7 @@ void workspace_minimized_show(struct sway_container *con) {
 	if (!new_ws->node.destroying) {
 		ipc_event_workspace(new_ws, new_ws, "minimized");
 	}
+	view_container_set_foreign_minimized(con, false);
 }
 
 void root_for_each_workspace(void (*f)(struct sway_workspace *ws, void *data),

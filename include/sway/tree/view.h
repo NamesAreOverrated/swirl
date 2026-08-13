@@ -104,6 +104,8 @@ struct sway_view {
 	struct wl_listener foreign_activate_request;
 	struct wl_listener foreign_fullscreen_request;
 	struct wl_listener foreign_close_request;
+	struct wl_listener foreign_minimize_request;
+	struct wl_listener foreign_maximize_request;
 	struct wl_listener foreign_destroy;
 
 	bool destroying;
@@ -276,6 +278,18 @@ bool view_ancestor_is_only_visible(struct sway_view *view);
 void view_autoconfigure(struct sway_view *view);
 
 void view_set_activated(struct sway_view *view, bool activated);
+
+void view_set_foreign_minimized(struct sway_view *view, bool minimized);
+void view_set_foreign_maximized(struct sway_view *view, bool maximized);
+
+/**
+ * Propagate minimized/maximized state to every view under the container's
+ * subtree via the foreign-toplevel protocol.
+ */
+void view_container_set_foreign_minimized(struct sway_container *con,
+		bool minimized);
+void view_container_set_foreign_maximized(struct sway_container *con,
+		bool maximized);
 
 /**
  * Called when the view requests to be focused.

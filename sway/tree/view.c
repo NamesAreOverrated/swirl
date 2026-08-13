@@ -35,6 +35,7 @@
 #include "sway/tree/column.h"
 #include "sway/tree/container.h"
 #include "sway/tree/layout.h"
+#include "sway/tree/root.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
 #include "sway/config.h"
@@ -45,6 +46,16 @@ static void handle_outputs_update(
 		struct wl_listener *listener, void *data) {
 	struct sway_view *view = wl_container_of(listener, view, outputs_update);
 	struct wlr_scene_outputs_update_event *event = data;
+
+	// While minimized the view's scene node is parked in the disabled
+	// staging tree, which has no outputs. Don't clear the toplevel's output
+	// association in that case, or taskbars (waybar wlr/taskbar) drop the
+	// button because all-outputs defaults to false.
+	struct sway_container *top = view->container ?
+			container_toplevel_ancestor(view->container) : NULL;
+	if (top && top->minimized) {
+		return;
+	}
 
 	struct wlr_foreign_toplevel_handle_v1 *toplevel = view->foreign_toplevel;
 	if (toplevel) {
@@ -500,6 +511,48 @@ void view_set_activated(struct sway_view *view, bool activated) {
 	}
 }
 
+void view_set_foreign_minimized(struct sway_view *view, bool minimized) {
+	if (view->foreign_toplevel) {
+		wlr_foreign_toplevel_handle_v1_set_minimized(
+				view->foreign_toplevel, minimized);
+	}
+}
+
+void view_set_foreign_maximized(struct sway_view *view, bool maximized) {
+	if (view->foreign_toplevel) {
+		wlr_foreign_toplevel_handle_v1_set_maximized(
+				view->foreign_toplevel, maximized);
+	}
+}
+
+void view_container_set_foreign_minimized(struct sway_container *con,
+		bool minimized) {
+	if (con->view) {
+		view_set_foreign_minimized(con->view, minimized);
+	}
+	if (!con->pending.children) {
+		return;
+	}
+	for (int i = 0; i < con->pending.children->length; i++) {
+		struct sway_container *c = con->pending.children->items[i];
+		view_container_set_foreign_minimized(c, minimized);
+	}
+}
+
+void view_container_set_foreign_maximized(struct sway_container *con,
+		bool maximized) {
+	if (con->view) {
+		view_set_foreign_maximized(con->view, maximized);
+	}
+	if (!con->pending.children) {
+		return;
+	}
+	for (int i = 0; i < con->pending.children->length; i++) {
+		view_container_set_foreign_maximized(
+				con->pending.children->items[i], maximized);
+	}
+}
+
 void view_request_activate(struct sway_view *view, struct sway_seat *seat) {
 	struct sway_workspace *ws = view->container->pending.workspace;
 	if (!seat) {
@@ -762,6 +815,10 @@ static void handle_foreign_activate_request(
 	struct sway_view *view = wl_container_of(
 			listener, view, foreign_activate_request);
 	struct wlr_foreign_toplevel_handle_v1_activated_event *event = data;
+	struct sway_container *top = container_toplevel_ancestor(view->container);
+	if (top->minimized) {
+		workspace_minimized_show(top);
+	}
 	struct sway_seat *seat;
 	wl_list_for_each(seat, &server.input->seats, link) {
 		if (seat->wlr_seat == event->seat) {
@@ -775,6 +832,40 @@ static void handle_foreign_activate_request(
 		}
 	}
 	transaction_commit_dirty();
+}
+
+static void handle_foreign_minimize_request(
+		struct wl_listener *listener, void *data) {
+	struct sway_view *view = wl_container_of(
+			listener, view, foreign_minimize_request);
+	struct wlr_foreign_toplevel_handle_v1_minimized_event *event = data;
+
+	struct sway_seat *seat = input_manager_current_seat();
+	struct sway_node *focus = seat_get_focus(seat);
+	if (focus == &view->container->node) {
+		return;
+	}
+
+	struct sway_container *top = container_toplevel_ancestor(view->container);
+	if (event->minimized) {
+		if (!top->minimized) {
+			root_minimize_container(top);
+		}
+	} else if (top->minimized) {
+		workspace_minimized_show(top);
+	}
+}
+
+static void handle_foreign_maximize_request(
+		struct wl_listener *listener, void *data) {
+	struct sway_view *view = wl_container_of(
+			listener, view, foreign_maximize_request);
+	struct wlr_foreign_toplevel_handle_v1_maximized_event *event = data;
+
+	struct sway_container *top = container_toplevel_ancestor(view->container);
+	if (event->maximized != top->maximized) {
+		container_toggle_maximize(top);
+	}
 }
 
 static void handle_foreign_fullscreen_request(
@@ -832,6 +923,8 @@ static void handle_foreign_destroy(
 	wl_list_remove(&view->foreign_activate_request.link);
 	wl_list_remove(&view->foreign_fullscreen_request.link);
 	wl_list_remove(&view->foreign_close_request.link);
+	wl_list_remove(&view->foreign_minimize_request.link);
+	wl_list_remove(&view->foreign_maximize_request.link);
 	wl_list_remove(&view->foreign_destroy.link);
 }
 
@@ -892,6 +985,12 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 	view->foreign_close_request.notify = handle_foreign_close_request;
 	wl_signal_add(&view->foreign_toplevel->events.request_close,
 			&view->foreign_close_request);
+	view->foreign_minimize_request.notify = handle_foreign_minimize_request;
+	wl_signal_add(&view->foreign_toplevel->events.request_minimize,
+			&view->foreign_minimize_request);
+	view->foreign_maximize_request.notify = handle_foreign_maximize_request;
+	wl_signal_add(&view->foreign_toplevel->events.request_maximize,
+			&view->foreign_maximize_request);
 	view->foreign_destroy.notify = handle_foreign_destroy;
 	wl_signal_add(&view->foreign_toplevel->events.destroy,
 			&view->foreign_destroy);
