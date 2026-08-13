@@ -1,6 +1,7 @@
 #include <string.h>
 #include "sway/commands.h"
 #include "sway/input/seat.h"
+#include "sway/ipc-server.h"
 #include "sway/tree/workspace.h"
 #include "log.h"
 
@@ -31,5 +32,6 @@ struct cmd_results *cmd_default_float(int argc, char **argv) {
 
 	sway_log(SWAY_DEBUG, "Workspace '%s' default_float=%d",
 			ws->name, ws->default_float);
+	ipc_event_workspace(ws, ws, "float");
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }

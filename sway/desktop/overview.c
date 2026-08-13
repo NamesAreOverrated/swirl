@@ -516,10 +516,13 @@ void overview_set_params(enum overview_scope scope,
 static void overview_action_focus(struct overview_thumbnail *t) {
   if (!t || !t->con)
     return;
-  struct sway_container *target = container_toplevel_ancestor(t->con);
-  if (t->ws && t->ws != output_get_active_workspace(root->outputs->items[0])) {
+  if (t->ws && root->outputs->length &&
+      t->ws != output_get_active_workspace(root->outputs->items[0])) {
     workspace_switch(t->ws);
   }
+  // Resolve the target after any workspace switch so we never hold a
+  // reference across a switch that may have reaped the old workspace.
+  struct sway_container *target = container_toplevel_ancestor(t->con);
   seat_set_focus_container(state.seat, target);
   transaction_commit_dirty();
 }
@@ -864,6 +867,11 @@ void overview_collect_targets(list_t *out, enum overview_scope scope,
 			OVERVIEW_CONTENT_MINIMIZED;
 	}
 
+	// Nothing but the minimize pool for a minimized scope.
+	if (scope == OVERVIEW_MINIMIZED) {
+		content_flags = OVERVIEW_CONTENT_MINIMIZED;
+	}
+
 	// Mirror overview_toggle: in swap mode, only offer tiles matching the
 	// focused container's type so the picker presents valid swap partners.
 	if (action == OVERVIEW_SWAP && seat) {
@@ -876,8 +884,12 @@ void overview_collect_targets(list_t *out, enum overview_scope scope,
 		}
 	}
 
-	if (scope == OVERVIEW_MINIMIZED) {
-		content_flags = OVERVIEW_CONTENT_MINIMIZED;
+	// Minimized windows are parked (workspace == NULL) and can only be
+	// restored. pull/swap assume live tiling/floating columns: feeding a
+	// parked container into them misclassifies it and can hit a NULL
+	// workspace (workspace_swap_columns / workspace_pull_column).
+	if (action != OVERVIEW_RESTORE) {
+		content_flags &= ~OVERVIEW_CONTENT_MINIMIZED;
 	}
 
 	if (scope == OVERVIEW_CURRENT) {
@@ -1134,7 +1146,12 @@ void overview_toggle(void) {
   struct wlr_allocator *alloc = output->wlr_output->allocator;
   const struct wlr_drm_format *fmt = output->wlr_output->swapchain
       ? &output->wlr_output->swapchain->format : NULL;
-  if (!fmt) return;
+  if (!fmt) {
+    // overview_setup already created the dim background + hover ring on the
+    // overlay layer; undo it so a future toggle doesn't leak them.
+    overview_teardown();
+    return;
+  }
 
   int bt = 0;
   if (config->border == B_PIXEL || config->border == B_NORMAL) {

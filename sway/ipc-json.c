@@ -15,6 +15,7 @@
 #include "sway/server.h"
 #include "sway/tree/container.h"
 #include "sway/tree/view.h"
+#include "sway/tree/root.h"
 #include "sway/tree/workspace.h"
 #include "sway/output.h"
 #include "sway/input/input-manager.h"
@@ -530,6 +531,20 @@ static void ipc_json_describe_workspace(struct sway_workspace *workspace,
 	json_object_object_add(object, "orientation",
 			json_object_new_string(
 				ipc_json_orientation_description(workspace->layout)));
+
+	// Swirl extra state: "new windows float by default" toggle and the
+	// per-workspace minimize pool, so bars/scripts can render indicators.
+	json_object_object_add(object, "default_float",
+			json_object_new_boolean(workspace->default_float));
+	json_object *minimized = json_object_new_array();
+	for (int i = 0; i < workspace->minimized->length; ++i) {
+		struct sway_container *con = workspace->minimized->items[i];
+		json_object_array_add(minimized,
+				json_object_new_int((int)con->node.id));
+	}
+	json_object_object_add(object, "minimized", minimized);
+	json_object_object_add(object, "minimized_count",
+			json_object_new_int(workspace->minimized->length));
 
 	// Floating
 	json_object *floating_array = json_object_new_array();
@@ -1543,8 +1558,15 @@ json_object *ipc_json_get_overview_targets(enum overview_scope scope,
 		else if (t->type == OVERVIEW_CONTENT_MINIMIZED)
 			type = "minimized";
 		json_object_object_add(o, "type", json_object_new_string(type));
-		const char *ws_name = con->pending.workspace
-			? con->pending.workspace->name : "";
+		const char *ws_name = NULL;
+		if (con->pending.workspace) {
+			ws_name = con->pending.workspace->name;
+		} else if (t->type == OVERVIEW_CONTENT_MINIMIZED) {
+			// Minimized containers are detached (pending.workspace NULL);
+			// report their source pool so clients can group by workspace.
+			struct sway_workspace *owner = workspace_minimized_owner(con);
+			ws_name = owner ? owner->name : NULL;
+		}
 		json_object_object_add(o, "workspace",
 			json_object_new_string(ws_name ? ws_name : ""));
 		json_object_object_add(o, "focused",

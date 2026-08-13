@@ -280,21 +280,50 @@ void root_minimize_container(struct sway_container *con) {
 
 	ipc_event_window(con, "move");
 	ipc_event_minimize(con, true);
+	if (ws && !ws->node.destroying) {
+		ipc_event_workspace(ws, ws, "minimized");
+	}
 }
 
-void workspace_minimized_remove(struct sway_container *con) {
-	for (int i = 0; i < root->outputs->length; ++i) {
-		struct sway_output *output = root->outputs->items[i];
-		for (int j = 0; j < output->workspaces->length; ++j) {
-			struct sway_workspace *ws =
-				output->workspaces->items[j];
-			int index = list_find(ws->minimized, con);
-			if (index != -1) {
-				list_del(ws->minimized, index);
-				return;
-			}
+static struct sway_workspace *minimized_scan(list_t *workspaces,
+		struct sway_container *con) {
+	for (int j = 0; j < workspaces->length; ++j) {
+		struct sway_workspace *ws = workspaces->items[j];
+		if (list_find(ws->minimized, con) != -1) {
+			return ws;
 		}
 	}
+	return NULL;
+}
+
+// Non-destructive: report which workspace pool owns this container, or NULL
+// if it is not parked anywhere. Scans the active outputs and the fallback
+// (noop) output, since workspaces get parked there when their output is
+// disabled and a minimized window can be saved along with them.
+struct sway_workspace *workspace_minimized_owner(struct sway_container *con) {
+	struct sway_workspace *ws;
+	for (int i = 0; i < root->outputs->length; ++i) {
+		struct sway_output *output = root->outputs->items[i];
+		ws = minimized_scan(output->workspaces, con);
+		if (ws) {
+			return ws;
+		}
+	}
+	if (root->fallback_output) {
+		ws = minimized_scan(root->fallback_output->workspaces, con);
+		if (ws) {
+			return ws;
+		}
+	}
+	return NULL;
+}
+
+struct sway_workspace *workspace_minimized_remove(struct sway_container *con) {
+	struct sway_workspace *ws = workspace_minimized_owner(con);
+	if (ws) {
+		list_del(ws->minimized, list_find(ws->minimized, con));
+	}
+	return ws;
 }
 
 void workspace_minimized_show(struct sway_container *con) {
@@ -309,7 +338,7 @@ void workspace_minimized_show(struct sway_container *con) {
 		return;
 	}
 
-	workspace_minimized_remove(con);
+	struct sway_workspace *old_ws = workspace_minimized_remove(con);
 	con->minimized = false;
 
 	if (new_ws->fullscreen) {
@@ -346,6 +375,12 @@ void workspace_minimized_show(struct sway_container *con) {
 
 	ipc_event_window(con, "move");
 	ipc_event_minimize(con, false);
+	if (old_ws && !old_ws->node.destroying && old_ws != new_ws) {
+		ipc_event_workspace(old_ws, old_ws, "minimized");
+	}
+	if (!new_ws->node.destroying) {
+		ipc_event_workspace(new_ws, new_ws, "minimized");
+	}
 }
 
 void root_for_each_workspace(void (*f)(struct sway_workspace *ws, void *data),

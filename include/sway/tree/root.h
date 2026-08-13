@@ -110,9 +110,15 @@ void root_scratchpad_hide(struct sway_container *con);
 void root_minimize_container(struct sway_container *con);
 
 /**
+ * Report which workspace pool a container is parked in, or NULL if it is not
+ * minimized. Non-destructive.
+ */
+struct sway_workspace *workspace_minimized_owner(struct sway_container *con);
+
+/**
  * Remove a minimized container from whichever workspace pool it lives in.
  */
-void workspace_minimized_remove(struct sway_container *con);
+struct sway_workspace *workspace_minimized_remove(struct sway_container *con);
 
 /**
  * Call a minimized container out of its pool into the focused workspace,

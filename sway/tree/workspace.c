@@ -293,8 +293,11 @@ void workspace_destroy(struct sway_workspace *workspace) {
 	}
 
 	// Destroy any minimized containers still parked in this workspace's pool
-	// so they don't leak. Snapshot first because container_destroy() removes
-	// the container from the pool while we iterate.
+	// so they don't leak. Snapshot first because container_begin_destroy()
+	// removes the container from the pool while we iterate. Use
+	// container_begin_destroy() rather than container_destroy() directly:
+	// the pooled windows were never marked destroying, and the proper entry
+	// point unwinds the pool (with events) and tears the view down.
 	int n_min = workspace->minimized->length;
 	if (n_min) {
 		struct sway_container **min_snap =
@@ -304,7 +307,7 @@ void workspace_destroy(struct sway_workspace *workspace) {
 				min_snap[i] = workspace->minimized->items[i];
 			}
 			for (int i = 0; i < n_min; i++) {
-				container_destroy(min_snap[i]);
+				container_begin_destroy(min_snap[i]);
 			}
 			free(min_snap);
 		}
@@ -792,6 +795,12 @@ bool workspace_is_empty(struct sway_workspace *ws) {
 			return false;
 		}
 	}
+	// The minimize pool is content: a workspace whose only windows are parked
+	// there must not be reaped (its pooled windows would be destroyed without
+	// going through container_begin_destroy).
+	if (ws->minimized->length) {
+		return false;
+	}
 	return true;
 }
 
@@ -1021,8 +1030,12 @@ struct sway_container *workspace_create_new_column_at(struct sway_workspace *ws,
 	struct sway_container *workspace_add_tiling(struct sway_workspace *workspace,
 		struct sway_container *con) {
 	if (con->minimized) {
-		workspace_minimized_remove(con);
+		struct sway_workspace *old_ws = workspace_minimized_remove(con);
 		con->minimized = false;
+		wlr_scene_node_set_enabled(&con->scene_tree->node, true);
+		if (old_ws && !old_ws->node.destroying) {
+			ipc_event_workspace(old_ws, old_ws, "minimized");
+		}
 	}
 	sway_log(SWAY_DEBUG, "[TILE | workspace_add_tiling] con=%p "
 		"was_view=%d tiling_len=%d", con, !!con->view,
@@ -1208,8 +1221,12 @@ void workspace_fix_overflow(struct sway_workspace *ws) {
 void workspace_add_floating(struct sway_workspace *workspace,
 		struct sway_container *con) {
 	if (con->minimized) {
-		workspace_minimized_remove(con);
+		struct sway_workspace *old_ws = workspace_minimized_remove(con);
 		con->minimized = false;
+		wlr_scene_node_set_enabled(&con->scene_tree->node, true);
+		if (old_ws && !old_ws->node.destroying) {
+			ipc_event_workspace(old_ws, old_ws, "minimized");
+		}
 	}
 	if (con->pending.workspace) {
 		container_detach(con);
@@ -1425,6 +1442,17 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 		(void*)con, !!con->view, !!con->pending.parent,
 		(void*)old_ws, (void*)ws, index, ws->tiling->length);
 
+	// Guard: never insert a still-parked (minimized) container into the
+	// tiling tree — unwind the pool first, matching add_tiling/add_floating.
+	if (con->minimized) {
+		struct sway_workspace *owner = workspace_minimized_remove(con);
+		con->minimized = false;
+		wlr_scene_node_set_enabled(&con->scene_tree->node, true);
+		if (owner && !owner->node.destroying) {
+			ipc_event_workspace(owner, owner, "minimized");
+		}
+	}
+
 	if (con->pending.parent) {
 		struct sway_container *old_parent = con->pending.parent;
 		container_detach(con);
@@ -1595,6 +1623,9 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 	if (a == b) return;
 	struct sway_workspace *ws_a = a->pending.workspace;
 	struct sway_workspace *ws_b = b->pending.workspace;
+	// Minimized containers are parked with a NULL workspace; never let a
+	// parked container through here.
+	if (!ws_a || !ws_b) return;
 	int idx_a = list_find(ws_a->tiling, a);
 	int idx_b = list_find(ws_b->tiling, b);
 	if (idx_a < 0 || idx_b < 0) return;
