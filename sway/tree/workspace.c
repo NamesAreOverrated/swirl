@@ -1489,8 +1489,9 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 	struct sway_container *view_col = container_toplevel_ancestor(view);
 	struct sway_container *target_col = container_toplevel_ancestor(target);
 
-	// Same column reorder
-	if (view_col && view_col == target_col) {
+	// Same column reorder (only when target is a sibling view, not the
+	// column container itself — own-column edge drops become new columns)
+	if (view_col && view_col == target_col && target != view_col) {
 		list_t *children = view_col->pending.children;
 		int vi = list_find(children, view);
 		int ti = list_find(children, target);
