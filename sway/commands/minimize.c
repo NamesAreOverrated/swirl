@@ -26,18 +26,6 @@ static struct cmd_results *minimize_hide(struct sway_container *con) {
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
 
-static struct cmd_results *minimize_show(void) {
-	struct sway_seat *seat = input_manager_current_seat();
-	struct sway_workspace *ws = seat_get_focused_workspace(seat);
-	if (!ws || !ws->minimized->length) {
-		return cmd_results_new(CMD_INVALID, "Minimize pool is empty");
-	}
-	struct sway_container *con = ws->minimized->items[0];
-	workspace_minimized_show(con);
-	transaction_commit_dirty();
-	return cmd_results_new(CMD_SUCCESS, NULL);
-}
-
 static struct cmd_results *minimize_show_n(int n) {
 	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *ws = seat_get_focused_workspace(seat);
@@ -56,21 +44,8 @@ static struct cmd_results *minimize_show_n(int n) {
 }
 
 struct cmd_results *cmd_minimize(int argc, char **argv) {
-	struct cmd_results *error = NULL;
-	if (argc == 0) {
-		struct sway_seat *seat = input_manager_current_seat();
-		struct sway_node *node = seat_get_focus(seat);
-		if (!node || node->type != N_CONTAINER) {
-			return cmd_results_new(CMD_INVALID, "No focusable container");
-		}
-		return minimize_hide(node->sway_container);
-	}
-	if ((error = checkarg(argc, "minimize", EXPECTED_AT_LEAST, 1))) {
-		return error;
-	}
-
-	if (strcmp(argv[0], "hide") == 0) {
-		if (config->handler_context.node_overridden) {
+	if (argc == 0 || strcmp(argv[0], "hide") == 0) {
+		if (argc > 0 && config->handler_context.node_overridden) {
 			return minimize_hide(config->handler_context.container);
 		}
 		struct sway_seat *seat = input_manager_current_seat();
@@ -79,7 +54,8 @@ struct cmd_results *cmd_minimize(int argc, char **argv) {
 			return cmd_results_new(CMD_INVALID, "No focusable container");
 		}
 		return minimize_hide(node->sway_container);
-	} else if (strcmp(argv[0], "show") == 0) {
+	}
+	if (strcmp(argv[0], "show") == 0) {
 		if (argc >= 2) {
 			char *end;
 			long n = strtol(argv[1], &end, 10);
@@ -89,7 +65,7 @@ struct cmd_results *cmd_minimize(int argc, char **argv) {
 			}
 			return minimize_show_n((int)n);
 		}
-		return minimize_show();
+		return minimize_show_n(1);
 	} else if (strcmp(argv[0], "toggle") == 0) {
 		struct sway_container *con =
 			config->handler_context.node_overridden
@@ -108,7 +84,7 @@ struct cmd_results *cmd_minimize(int argc, char **argv) {
 		if (node && node->type == N_CONTAINER) {
 			return minimize_hide(node->sway_container);
 		}
-		return minimize_show();
+		return minimize_show_n(1);
 	} else if (strcmp(argv[0], "overview") == 0) {
 		overview_set_params(OVERVIEW_MINIMIZED, OVERVIEW_RESTORE,
 				OVERVIEW_CONTENT_MINIMIZED);

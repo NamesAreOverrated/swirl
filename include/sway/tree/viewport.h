@@ -12,12 +12,6 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 
 void viewport_arrange_windows(struct sway_container *col);
 
-void viewport_compute_offset(struct sway_workspace *ws,
-		struct sway_container *active, double area_width, double area_height);
-
-void handle_focus_viewport(struct sway_seat *seat,
-		struct sway_container *container);
-
 int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 		int exclude_idx, bool exclude_occupied, int *candidates,
 		int max_cand, double *out_occupied);

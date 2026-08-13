@@ -396,20 +396,23 @@ static void overview_collect(struct sway_container *con,
                              struct wlr_allocator *alloc,
                              const struct wlr_drm_format *fmt,
                              float scale, int bt, int *idx) {
-  // One tile per top-level container (column or floating window).
-  if (!con->view) {
-    if (overview_thumbnail_create(con, ws, output, active_ws,
-                                  renderer, alloc, fmt, scale, bt, *idx + 1,
+  // One tile per top-level container (column or floating window). The next
+  // thumbnail always gets *idx + 1 and the counter only advances on success,
+  // so failed renders never leave a numbered gap.
+  int prev = *idx;
+  if (con->view) {
+    if (con->view->saved_buffer &&
+        overview_thumbnail_create(con, ws, output, active_ws,
+                                  renderer, alloc, fmt, scale, bt, prev + 1,
                                   overview_state.action)) {
-      *idx = *idx + 1;
+      *idx = prev + 1;
     }
     return;
   }
-  if (con->view->saved_buffer) {
-    (*idx)++;
-    overview_thumbnail_create(con, ws, output, active_ws,
-                              renderer, alloc, fmt, scale, bt, *idx,
-                              overview_state.action);
+  if (overview_thumbnail_create(con, ws, output, active_ws,
+                                renderer, alloc, fmt, scale, bt, prev + 1,
+                                overview_state.action)) {
+    *idx = prev + 1;
   }
 }
 

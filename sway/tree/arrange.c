@@ -11,7 +11,6 @@
 #include "sway/tree/layout.h"
 #include "sway/tree/root.h"
 #include "sway/tree/viewport.h"
-#include "sway/input/seat.h"
 #include "sway/output.h"
 #include "sway/tree/workspace.h"
 #include "sway/tree/view.h"
@@ -333,20 +332,6 @@ void arrange_workspace(struct sway_workspace *workspace) {
 
 		// Column layout — replaces standard arrange_children for tiling
 		workspace_arrange_columns(workspace, &box);
-
-		struct sway_seat *seat = input_manager_current_seat();
-		struct sway_container *focus =
-			seat_get_focus_inactive_tiling(seat, workspace);
-		while (focus && focus->pending.parent) {
-			focus = focus->pending.parent;
-		}
-		if (focus && workspace_is_visible(workspace)) {
-			viewport_compute_offset(workspace, focus,
-				box.width, box.height);
-		} else {
-			workspace->viewport_x = 0;
-			workspace->viewport_y = 0;
-		}
 
 		arrange_floating(workspace->floating);
 
