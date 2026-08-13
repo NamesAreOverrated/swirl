@@ -36,16 +36,23 @@ struct overview_thumbnail {
   struct wlr_scene_buffer *badge_sb;
   struct sway_container *con;
   struct sway_workspace *ws;
+  enum overview_action action;
   int w, h;
   float origin_x, origin_y;
 };
 
 static bool overview_active = false;
 
+struct overview_divider {
+  struct wlr_scene_rect *rect;
+  struct wl_list link;
+};
+
 static struct {
   struct wlr_scene_rect *bg;
   struct wlr_scene_rect *hover_rect;
   struct wl_list thumbnails;
+  struct wl_list dividers;
   int n_thumbnails;
   int digit_buf;
   int digit_count;
@@ -53,6 +60,7 @@ static struct {
   struct sway_seat *seat;
   enum overview_scope scope;
   enum overview_action action;
+  int content;
 } state;
 
 static void overview_get_origin(struct sway_container *con,
@@ -67,27 +75,30 @@ static bool overview_thumbnail_create_view(struct sway_container *con,
                                       struct wlr_renderer *renderer,
                                       struct wlr_allocator *alloc,
                                       const struct wlr_drm_format *fmt,
-                                      float scale, int bt, int idx);
+                                      float scale, int bt, int idx,
+                                      enum overview_action action);
 
 static void overview_thumbnail_finalize(struct wlr_buffer *buf,
-                                      struct wlr_swapchain *sc, int scw, int sch,
-                                      struct sway_container *con,
-                                      struct sway_workspace *ws,
-                                      struct sway_output *output,
-                                      struct sway_workspace *active_ws,
-                                      struct wlr_renderer *renderer,
-                                      struct wlr_allocator *alloc,
-                                      const struct wlr_drm_format *fmt,
-                                      float scale, int bt, int idx);
+                                       struct wlr_swapchain *sc, int scw, int sch,
+                                       struct sway_container *con,
+                                       struct sway_workspace *ws,
+                                       struct sway_output *output,
+                                       struct sway_workspace *active_ws,
+                                       struct wlr_renderer *renderer,
+                                       struct wlr_allocator *alloc,
+                                       const struct wlr_drm_format *fmt,
+                                       float scale, int bt, int idx,
+                                       enum overview_action action);
 
 static bool overview_thumbnail_create_column(struct sway_container *con,
-                                      struct sway_workspace *ws,
-                                      struct sway_output *output,
-                                      struct sway_workspace *active_ws,
-                                      struct wlr_renderer *renderer,
-                                      struct wlr_allocator *alloc,
-                                      const struct wlr_drm_format *fmt,
-                                      float scale, int bt, int idx);
+                                       struct sway_workspace *ws,
+                                       struct sway_output *output,
+                                       struct sway_workspace *active_ws,
+                                       struct wlr_renderer *renderer,
+                                       struct wlr_allocator *alloc,
+                                       const struct wlr_drm_format *fmt,
+                                       float scale, int bt, int idx,
+                                       enum overview_action action);
 
 static bool overview_thumbnail_create(struct sway_container *con,
                                       struct sway_workspace *ws,
@@ -96,15 +107,16 @@ static bool overview_thumbnail_create(struct sway_container *con,
                                       struct wlr_renderer *renderer,
                                       struct wlr_allocator *alloc,
                                       const struct wlr_drm_format *fmt,
-                                      float scale, int bt, int idx) {
+                                      float scale, int bt, int idx,
+                                      enum overview_action action) {
   if (con->view) {
     if (!con->view->saved_buffer)
       return false;
     return overview_thumbnail_create_view(con, ws, output, active_ws,
-        renderer, alloc, fmt, scale, bt, idx);
+        renderer, alloc, fmt, scale, bt, idx, action);
   }
   return overview_thumbnail_create_column(con, ws, output, active_ws,
-      renderer, alloc, fmt, scale, bt, idx);
+      renderer, alloc, fmt, scale, bt, idx, action);
 }
 
 static bool overview_thumbnail_create_view(struct sway_container *con,
@@ -114,7 +126,8 @@ static bool overview_thumbnail_create_view(struct sway_container *con,
                                       struct wlr_renderer *renderer,
                                       struct wlr_allocator *alloc,
                                       const struct wlr_drm_format *fmt,
-                                      float scale, int bt, int idx) {
+                                      float scale, int bt, int idx,
+                                      enum overview_action action) {
   if (!con->view->saved_buffer)
     return false;
   struct wlr_buffer *saved_buf = con->view->saved_buffer;
@@ -192,7 +205,7 @@ static bool overview_thumbnail_create_view(struct sway_container *con,
   }
 
   overview_thumbnail_finalize(buf, sc, scw, sch, con, ws, output,
-      active_ws, renderer, alloc, fmt, scale, bt, idx);
+      active_ws, renderer, alloc, fmt, scale, bt, idx, action);
   return true;
 }
 
@@ -201,7 +214,8 @@ static void overview_thumbnail_finalize(struct wlr_buffer *buf,
       struct sway_container *con, struct sway_workspace *ws,
       struct sway_output *output, struct sway_workspace *active_ws,
       struct wlr_renderer *renderer, struct wlr_allocator *alloc,
-      const struct wlr_drm_format *fmt, float scale, int bt, int idx) {
+      const struct wlr_drm_format *fmt, float scale, int bt, int idx,
+      enum overview_action action) {
   struct overview_thumbnail *t = calloc(1, sizeof(*t));
   if (!t) {
     sway_log(SWAY_ERROR, "OVERVIEW:   thumb alloc FAILED");
@@ -214,6 +228,7 @@ static void overview_thumbnail_finalize(struct wlr_buffer *buf,
   overview_get_origin(con, output, active_ws, &t->origin_x, &t->origin_y);
   t->con = con;
   t->ws = ws;
+  t->action = action;
 
   int badge_w = (int)(48 * scale);
   int badge_h = (int)(48 * scale);
@@ -329,7 +344,8 @@ static bool overview_thumbnail_create_column(struct sway_container *con,
                                       struct wlr_renderer *renderer,
                                       struct wlr_allocator *alloc,
                                       const struct wlr_drm_format *fmt,
-                                      float scale, int bt, int idx) {
+                                      float scale, int bt, int idx,
+                                      enum overview_action action) {
   #define MAX_COL_VIEW 64
   struct overview_col_view cv[MAX_COL_VIEW];
   int n = 0;
@@ -411,7 +427,7 @@ static bool overview_thumbnail_create_column(struct sway_container *con,
   }
 
   overview_thumbnail_finalize(buf, sc, comp_w, comp_h, con, ws, output,
-      active_ws, renderer, alloc, fmt, scale, bt, idx);
+      active_ws, renderer, alloc, fmt, scale, bt, idx, action);
   return true;
 }
 
@@ -433,12 +449,11 @@ static void overview_collect(struct sway_container *con,
                              struct wlr_allocator *alloc,
                              const struct wlr_drm_format *fmt,
                              float scale, int bt, int *idx) {
-  // One tile per top-level container (column), so t->con is always a column
-  // and t->ws is always set — consistent with the minimize model. Leaf view
-  // containers still get their own tile.
+  // One tile per top-level container (column or floating window).
   if (!con->view) {
     if (overview_thumbnail_create(con, ws, output, active_ws,
-                                  renderer, alloc, fmt, scale, bt, *idx + 1)) {
+                                  renderer, alloc, fmt, scale, bt, *idx + 1,
+                                  state.action)) {
       *idx = *idx + 1;
     }
     return;
@@ -446,7 +461,8 @@ static void overview_collect(struct sway_container *con,
   if (con->view->saved_buffer) {
     (*idx)++;
     overview_thumbnail_create(con, ws, output, active_ws,
-                              renderer, alloc, fmt, scale, bt, *idx);
+                              renderer, alloc, fmt, scale, bt, *idx,
+                              state.action);
   }
 }
 
@@ -455,16 +471,27 @@ static void overview_collect_minimized(struct sway_output *output,
                                        struct wlr_allocator *alloc,
                                        const struct wlr_drm_format *fmt,
                                        float scale, int bt, int *con_idx) {
-  for (int i = 0; i < root->minimized->length; i++) {
-    struct sway_container *con = root->minimized->items[i];
-    // Columns (no view) are composited from their child windows; windows
-    // (with a view) are rendered directly. overview_thumbnail_create returns
-    // false when there is nothing to show, so only count successful tiles.
-    int prev = *con_idx;
-    if (overview_thumbnail_create(con, NULL, output, NULL,
-                                  renderer, alloc, fmt, scale, bt,
-                                  prev + 1)) {
-      *con_idx = prev + 1;
+  // Dedicated minimize overview: show every minimized window across all
+  // workspaces (a global catch-all). Restoring is handled by
+  // overview_action_restore, which adds the window back to the focused
+  // workspace. Pass the source workspace so t->ws is set for focus switching.
+  for (int oi = 0; oi < root->outputs->length; oi++) {
+    struct sway_output *o = root->outputs->items[oi];
+    for (int wi = 0; wi < o->workspaces->length; wi++) {
+      struct sway_workspace *ws = o->workspaces->items[wi];
+      for (int i = 0; i < ws->minimized->length; i++) {
+        struct sway_container *con = ws->minimized->items[i];
+        // Columns (no view) are composited from their child windows; windows
+        // (with a view) are rendered directly. overview_thumbnail_create
+        // returns false when there is nothing to show, so only count
+        // successful tiles.
+        int prev = *con_idx;
+        if (overview_thumbnail_create(con, ws, output, NULL,
+                                      renderer, alloc, fmt, scale, bt,
+                                      prev + 1, OVERVIEW_RESTORE)) {
+          *con_idx = prev + 1;
+        }
+      }
     }
   }
 }
@@ -472,9 +499,16 @@ static void overview_collect_minimized(struct sway_output *output,
 bool overview_is_active(void) { return overview_active; }
 
 void overview_set_params(enum overview_scope scope,
-		enum overview_action action) {
+		enum overview_action action, int content_flags) {
 	state.scope = scope;
 	state.action = action;
+	// Default to showing everything for non-minimized scopes when no flags
+	// are supplied.
+	if (content_flags == 0 && scope != OVERVIEW_MINIMIZED) {
+		content_flags = OVERVIEW_CONTENT_TILED | OVERVIEW_CONTENT_FLOATING |
+			OVERVIEW_CONTENT_MINIMIZED;
+	}
+	state.content = content_flags;
 }
 
 
@@ -493,9 +527,22 @@ static void overview_action_focus(struct overview_thumbnail *t) {
 static void overview_action_pull(struct overview_thumbnail *t) {
   if (!t || !t->con)
     return;
-  struct sway_container *target_col = container_toplevel_ancestor(t->con);
-  struct sway_container *focus = state.focus_con;
+  struct sway_container *target = container_toplevel_ancestor(t->con);
   struct sway_workspace *active_ws = output_get_active_workspace(root->outputs->items[0]);
+  if (container_is_floating(target)) {
+    // Floating windows aren't columns: relocate the window to the focused
+    // workspace (where your focus/cursor is).
+    struct sway_workspace *src = target->pending.workspace;
+    if (src != active_ws) {
+      container_detach(target);
+      workspace_add_floating(active_ws, target);
+    }
+    seat_set_focus_container(state.seat, target);
+    transaction_commit_dirty();
+    return;
+  }
+  struct sway_container *target_col = target;
+  struct sway_container *focus = state.focus_con;
   if (!focus) {
     seat_set_focus_container(state.seat, target_col);
     transaction_commit_dirty();
@@ -515,29 +562,42 @@ static void overview_action_pull(struct overview_thumbnail *t) {
 static void overview_action_swap(struct overview_thumbnail *t) {
   if (!t || !t->con)
     return;
-  struct sway_container *target_col = container_toplevel_ancestor(t->con);
   struct sway_container *focus = state.focus_con;
   if (!focus) {
-    seat_set_focus_container(state.seat, target_col);
+    seat_set_focus_container(state.seat, container_toplevel_ancestor(t->con));
     return;
   }
-  struct sway_container *focus_col = container_toplevel_ancestor(focus);
-  if (focus_col != target_col) {
-    workspace_swap_columns(focus_col, target_col);
-    seat_set_focus_raw(state.seat, &target_col->node);
-    struct sway_workspace *ws_a = focus_col->pending.workspace;
-    struct sway_workspace *ws_b = target_col->pending.workspace;
-    arrange_workspace(ws_a);
-    if (ws_b != ws_a) arrange_workspace(ws_b);
-    transaction_commit_dirty();
-  } else {
-    seat_set_focus_container(state.seat, target_col);
+  struct sway_container *focus_top = container_toplevel_ancestor(focus);
+  struct sway_container *target = container_toplevel_ancestor(t->con);
+  // Only swap within the same type (tiled<->tiled, floating<->floating).
+  // The overview already filters by focus type in swap mode; this guards
+  // against any mismatch (and clicking the focused tile itself).
+  if (focus_top == target) {
+    return;
   }
+  bool focus_float = container_is_floating(focus_top);
+  bool target_float = container_is_floating(target);
+  if (focus_float != target_float) {
+    return;
+  }
+  if (focus_float) {
+    workspace_swap_floating(focus_top, target);
+  } else {
+    workspace_swap_columns(focus_top, target);
+  }
+  seat_set_focus_raw(state.seat, &target->node);
+  struct sway_workspace *ws_a = focus_top->pending.workspace;
+  struct sway_workspace *ws_b = target->pending.workspace;
+  arrange_workspace(ws_a);
+  if (ws_b != ws_a) arrange_workspace(ws_b);
+  transaction_commit_dirty();
 }
 
 static void overview_action_restore(struct overview_thumbnail *t) {
   if (!t->con)
     return;
+  // Remove from its workspace pool and add to the focused workspace (just
+  // like pull/focus/swap).
   root_minimized_show(t->con);
   transaction_commit_dirty();
 }
@@ -571,19 +631,19 @@ void overview_handle_button(struct sway_seat *seat, uint32_t button,
   double cy = seat->cursor->cursor->y;
   struct overview_thumbnail *t = overview_thumbnail_at(cx, cy);
   if (t) {
-    switch (state.action) {
-    case OVERVIEW_FOCUS:
-      overview_action_focus(t);
-      break;
-    case OVERVIEW_PULL:
-      overview_action_pull(t);
-      break;
-    case OVERVIEW_SWAP:
-      overview_action_swap(t);
-      break;
-    case OVERVIEW_RESTORE:
-      overview_action_restore(t);
-      break;
+    switch (t->action) {
+      case OVERVIEW_FOCUS:
+        overview_action_focus(t);
+        break;
+      case OVERVIEW_PULL:
+        overview_action_pull(t);
+        break;
+      case OVERVIEW_SWAP:
+        overview_action_swap(t);
+        break;
+      case OVERVIEW_RESTORE:
+        overview_action_restore(t);
+        break;
     }
     overview_toggle();
   }
@@ -630,19 +690,19 @@ bool overview_handle_key(xkb_keysym_t sym) {
           i++;
         }
         if (t && t->con && t->con != focus) {
-          switch (state.action) {
-          case OVERVIEW_FOCUS:
-            overview_action_focus(t);
-            break;
-          case OVERVIEW_PULL:
-            overview_action_pull(t);
-            break;
-          case OVERVIEW_SWAP:
-            overview_action_swap(t);
-            break;
-          case OVERVIEW_RESTORE:
-            overview_action_restore(t);
-            break;
+          switch (t->action) {
+            case OVERVIEW_FOCUS:
+              overview_action_focus(t);
+              break;
+            case OVERVIEW_PULL:
+              overview_action_pull(t);
+              break;
+            case OVERVIEW_SWAP:
+              overview_action_swap(t);
+              break;
+            case OVERVIEW_RESTORE:
+              overview_action_restore(t);
+              break;
           }
         }
       }
@@ -673,131 +733,43 @@ static void overview_collect_workspace(struct sway_workspace *ws,
                                        struct wlr_renderer *renderer,
                                        struct wlr_allocator *alloc,
                                        const struct wlr_drm_format *fmt,
-                                       float scale, int bt, int *con_idx) {
+                                       float scale, int bt, int *con_idx,
+                                       int content) {
   struct wlr_scene_node *top_node;
-  wl_list_for_each(top_node, &ws->layers.tiling->children, link) {
-    struct sway_container *top = scene_descriptor_try_get(top_node,
-        SWAY_SCENE_DESC_CONTAINER);
-    if (top) {
-      overview_collect(top, ws, output, active_ws,
-                       renderer, alloc, fmt, scale, bt, con_idx);
-    }
-  }
-}
-
-static void overview_layout_and_enable(struct sway_output *output,
-                                       bool multi_ws) {
-  struct overview_thumbnail *t;
-  int n = state.n_thumbnails;
-  float scale = output->wlr_output->scale;
-  int ow = (int)(output->wlr_output->width / scale);
-  int oh = (int)(output->wlr_output->height / scale);
-  int ox = (int)(output->scene_output->x);
-  int oy = (int)(output->scene_output->y);
-
-  if (n == 0) {
-    wlr_scene_node_set_enabled(&root->layers.overview->node, true);
-    overview_active = true;
-    return;
-  }
-
-  #define MAX_WS 64
-  struct {
-    struct sway_workspace *ws;
-    float min_y, max_y, y_offset;
-  } ws_info[MAX_WS];
-  int n_ws = 0;
-
-  if (multi_ws) {
-    wl_list_for_each(t, &state.thumbnails, link) {
-      int wi;
-      for (wi = 0; wi < n_ws; wi++) {
-        if (ws_info[wi].ws == t->ws) break;
-      }
-      if (wi == n_ws) {
-        if (n_ws >= MAX_WS) continue;
-        ws_info[wi].ws = t->ws;
-        ws_info[wi].min_y = INFINITY;
-        ws_info[wi].max_y = -INFINITY;
-        n_ws++;
-      }
-      float th = (float)t->h / scale;
-      if (t->origin_y < ws_info[wi].min_y) ws_info[wi].min_y = t->origin_y;
-      if (t->origin_y + th > ws_info[wi].max_y) ws_info[wi].max_y = t->origin_y + th;
-    }
-
-    float ws_gap = 16.0f;
-    float cur = 0;
-    for (int wi = 0; wi < n_ws; wi++) {
-      ws_info[wi].y_offset = cur;
-      cur += ws_info[wi].max_y - ws_info[wi].min_y + ws_gap;
-    }
-  }
-
-  float min_x = INFINITY, min_y = INFINITY, max_x = -INFINITY, max_y = -INFINITY;
-  wl_list_for_each(t, &state.thumbnails, link) {
-    float tx = t->origin_x;
-    float tw = (float)t->w / scale;
-    float th = (float)t->h / scale;
-    if (tx < min_x) min_x = tx;
-
-    float oy = t->origin_y;
-    if (multi_ws) {
-      for (int wi = 0; wi < n_ws; wi++) {
-        if (ws_info[wi].ws == t->ws) {
-          oy = ws_info[wi].y_offset + (t->origin_y - ws_info[wi].min_y);
-          break;
-        }
+  // Tiled columns.
+  if (content & OVERVIEW_CONTENT_TILED) {
+    wl_list_for_each(top_node, &ws->layers.tiling->children, link) {
+      struct sway_container *top = scene_descriptor_try_get(top_node,
+          SWAY_SCENE_DESC_CONTAINER);
+      if (top) {
+        overview_collect(top, ws, output, active_ws,
+                         renderer, alloc, fmt, scale, bt, con_idx);
       }
     }
-    if (oy < min_y) min_y = oy;
-    if (tx + tw > max_x) max_x = tx + tw;
-    if (oy + th > max_y) max_y = oy + th;
   }
-
-  float src_w = max_x - min_x;
-  float src_h = max_y - min_y;
-  if (src_w <= 0 || src_h <= 0) return;
-  float avail_w = (float)ow * 0.9f;
-  float avail_h = (float)oh * 0.85f;
-  float fit = fminf(1.0f, fminf(avail_w / src_w, avail_h / src_h));
-  float dst_w = src_w * fit;
-  float dst_h = src_h * fit;
-  float base_x = ox + (ow - dst_w) / 2.0f;
-  float base_y = oy + (oh - dst_h) / 2.0f;
-
-  wl_list_for_each(t, &state.thumbnails, link) {
-    float oy = t->origin_y;
-    if (multi_ws) {
-      for (int wi = 0; wi < n_ws; wi++) {
-        if (ws_info[wi].ws == t->ws) {
-          oy = ws_info[wi].y_offset + (t->origin_y - ws_info[wi].min_y);
-          break;
-        }
+  // Floating windows.
+  if (content & OVERVIEW_CONTENT_FLOATING) {
+    wl_list_for_each(top_node, &ws->layers.floating->children, link) {
+      struct sway_container *top = scene_descriptor_try_get(top_node,
+          SWAY_SCENE_DESC_CONTAINER);
+      if (top) {
+        overview_collect(top, ws, output, active_ws,
+                         renderer, alloc, fmt, scale, bt, con_idx);
       }
     }
-    float tw = (float)t->w / scale * fit;
-    float th = (float)t->h / scale * fit;
-    float tx = base_x + (t->origin_x - min_x) * fit;
-    float ty = base_y + (oy - min_y) * fit;
-
-    wlr_scene_buffer_set_dest_size(t->sb, (int)tw, (int)th);
-    wlr_scene_node_set_position(&t->sb->node, (int)tx, (int)ty);
-
-    if (t->badge_sb) {
-      int bsz = (int)(48 * fit);
-      if (bsz < 28) bsz = 28;
-      int bpad = (int)(2 * fit);
-      if (bpad < 1) bpad = 1;
-      wlr_scene_buffer_set_dest_size(t->badge_sb, bsz, bsz);
-      wlr_scene_node_set_position(&t->badge_sb->node, (int)tx + bpad,
-                                  (int)ty + bpad);
-      wlr_scene_node_raise_to_top(&t->badge_sb->node);
+  }
+  // Minimized windows parked in this workspace's pool.
+  if (content & OVERVIEW_CONTENT_MINIMIZED) {
+    for (int i = 0; i < ws->minimized->length; i++) {
+      struct sway_container *con = ws->minimized->items[i];
+      int prev = *con_idx;
+      if (overview_thumbnail_create(con, ws, output, active_ws,
+                                    renderer, alloc, fmt, scale, bt,
+                                    prev + 1, OVERVIEW_RESTORE)) {
+        *con_idx = prev + 1;
+      }
     }
   }
-
-  wlr_scene_node_set_enabled(&root->layers.overview->node, true);
-  overview_active = true;
 }
 
 static void overview_layout_grid(struct sway_output *output) {
@@ -814,47 +786,122 @@ static void overview_layout_grid(struct sway_output *output) {
     return;
   }
 
-  int cols = (int)ceilf(sqrtf((float)n));
-  int rows = (int)ceilf((float)n / (float)cols);
-  float avail_w = ow * 0.9f;
-  float avail_h = oh * 0.85f;
-  float cell_w = avail_w / (float)cols;
-  float cell_h = avail_h / (float)rows;
-  float base_x = ox + (ow - avail_w) / 2.0f;
-  float base_y = oy + (oh - avail_h) / 2.0f;
+  /* Clear any dividers left from a previous layout pass. */
+  struct overview_divider *d, *dtmp;
+  wl_list_for_each_safe(d, dtmp, &state.dividers, link) {
+    wlr_scene_node_destroy(&d->rect->node);
+    wl_list_remove(&d->link);
+    free(d);
+  }
 
-  int i = 0;
+  /* Bucket thumbnails by workspace, preserving collection order. Within a
+   * workspace the order is tiled -> floating -> minimized. */
+  #define MAX_SEC 256
+  struct overview_section {
+    struct sway_workspace *ws;
+    struct overview_thumbnail **tiles;
+    int count;
+  } secs[MAX_SEC];
+  int n_sec = 0;
+
   struct overview_thumbnail *t;
   wl_list_for_each(t, &state.thumbnails, link) {
-    int r = i / cols;
-    int c = i % cols;
-    float tw = (float)t->w / scale;
-    float th = (float)t->h / scale;
-    float fit = fminf(cell_w / tw, cell_h / th);
-    tw = tw * fit;
-    th = th * fit;
-    float cx = base_x + (float)c * cell_w + (cell_w - tw) / 2.0f;
-    float cy = base_y + (float)r * cell_h + (cell_h - th) / 2.0f;
-
-    wlr_scene_buffer_set_dest_size(t->sb, (int)tw, (int)th);
-    wlr_scene_node_set_position(&t->sb->node, (int)cx, (int)cy);
-
-    if (t->badge_sb) {
-      int bsz = (int)(48 * fit);
-      if (bsz < 28) bsz = 28;
-      int bpad = (int)(2 * fit);
-      if (bpad < 1) bpad = 1;
-      wlr_scene_buffer_set_dest_size(t->badge_sb, bsz, bsz);
-      wlr_scene_node_set_position(&t->badge_sb->node, (int)cx + bpad,
-                                  (int)cy + bpad);
-      wlr_scene_node_raise_to_top(&t->badge_sb->node);
+    int si = -1;
+    for (int i = 0; i < n_sec; i++) {
+      if (secs[i].ws == t->ws) {
+        si = i;
+        break;
+      }
     }
-    i++;
+    if (si == -1) {
+      if (n_sec >= MAX_SEC) continue;
+      si = n_sec++;
+      secs[si].ws = t->ws;
+      secs[si].count = 0;
+      secs[si].tiles = NULL;
+    }
+    secs[si].tiles = realloc(secs[si].tiles,
+        sizeof(struct overview_thumbnail *) * (secs[si].count + 1));
+    secs[si].tiles[secs[si].count++] = t;
+  }
+
+  float avail_w = ow * 0.9f;
+  float avail_h = oh * 0.85f;
+  float base_x = ox + (ow - avail_w) / 2.0f;
+  float base_y = oy + (oh - avail_h) / 2.0f;
+  float tile_gap = 16.0f;
+
+  float sec_gap = 24.0f;
+  float slice_h = avail_h;
+  if (n_sec > 1) {
+    slice_h = (avail_h - sec_gap * (n_sec - 1)) / (float)n_sec;
+    if (slice_h < 1) slice_h = avail_h;
+  }
+
+  for (int si = 0; si < n_sec; si++) {
+    struct overview_section *sec = &secs[si];
+    int sn = sec->count;
+    if (sn == 0) {
+      free(sec->tiles);
+      continue;
+    }
+    int cols = (int)ceilf(sqrtf((float)sn));
+    int rows = (int)ceilf((float)sn / (float)cols);
+    float cell_w = avail_w / (float)cols;
+    float cell_h = slice_h / (float)rows;
+    float sec_y = base_y + (float)si * (slice_h + sec_gap);
+
+    for (int i = 0; i < sn; i++) {
+      struct overview_thumbnail *tt = sec->tiles[i];
+      int r = i / cols;
+      int c = i % cols;
+      float tw = (float)tt->w / scale;
+      float th = (float)tt->h / scale;
+      float fit = fminf((cell_w - tile_gap) / tw, (cell_h - tile_gap) / th);
+      tw = tw * fit;
+      th = th * fit;
+      float cx = base_x + (float)c * cell_w + (cell_w - tw) / 2.0f;
+      float cy = sec_y + (float)r * cell_h + (cell_h - th) / 2.0f;
+
+      wlr_scene_buffer_set_dest_size(tt->sb, (int)tw, (int)th);
+      wlr_scene_node_set_position(&tt->sb->node, (int)cx, (int)cy);
+
+      if (tt->badge_sb) {
+        int bsz = (int)(48 * fit);
+        if (bsz < 28) bsz = 28;
+        int bpad = (int)(2 * fit);
+        if (bpad < 1) bpad = 1;
+        wlr_scene_buffer_set_dest_size(tt->badge_sb, bsz, bsz);
+        wlr_scene_node_set_position(&tt->badge_sb->node,
+            (int)cx + bpad, (int)cy + bpad);
+        wlr_scene_node_raise_to_top(&tt->badge_sb->node);
+      }
+    }
+    free(sec->tiles);
+  }
+
+  /* Thin divider lines between workspace sections. */
+  for (int si = 0; si + 1 < n_sec; si++) {
+    float dy = base_y + (si + 1) * (slice_h + sec_gap) - sec_gap / 2.0f;
+    struct wlr_scene_rect *r = wlr_scene_rect_create(
+        root->layers.overview, (int)avail_w, 2,
+        (float[4]){0.55f, 0.55f, 0.55f, 0.5f});
+    if (r) {
+      wlr_scene_node_set_position(&r->node, (int)base_x, (int)(dy - 1));
+      struct overview_divider *nd = calloc(1, sizeof(*nd));
+      if (nd) {
+        nd->rect = r;
+        wl_list_insert(&state.dividers, &nd->link);
+      } else {
+        wlr_scene_node_destroy(&r->node);
+      }
+    }
   }
 
   wlr_scene_node_set_enabled(&root->layers.overview->node, true);
   overview_active = true;
 }
+
 
 static void overview_teardown(void) {
   struct overview_thumbnail *t, *tmp;
@@ -867,6 +914,12 @@ static void overview_teardown(void) {
     }
     wl_list_remove(&t->link);
     free(t);
+  }
+  struct overview_divider *d, *dtmp;
+  wl_list_for_each_safe(d, dtmp, &state.dividers, link) {
+    wlr_scene_node_destroy(&d->rect->node);
+    wl_list_remove(&d->link);
+    free(d);
   }
   state.n_thumbnails = 0;
   if (state.bg) {
@@ -931,6 +984,7 @@ static bool overview_setup(struct sway_output *output) {
   }
 
   wl_list_init(&state.thumbnails);
+  wl_list_init(&state.dividers);
   state.n_thumbnails = 0;
   return true;
 }
@@ -962,6 +1016,13 @@ void overview_toggle(void) {
   }
 
   int con_idx = 0;
+  int content = state.content;
+  // In swap mode, only show tiles matching the focused container's type so the
+  // overview presents valid swap partners (tiled-only / floating-only).
+  if (state.action == OVERVIEW_SWAP && state.focus_con) {
+    content = container_is_floating(container_toplevel_ancestor(state.focus_con))
+        ? OVERVIEW_CONTENT_FLOATING : OVERVIEW_CONTENT_TILED;
+  }
   if (state.scope == OVERVIEW_MINIMIZED) {
     overview_collect_minimized(output, renderer, alloc, fmt,
                                scale, bt, &con_idx);
@@ -973,13 +1034,15 @@ void overview_toggle(void) {
       for (int i = 0; i < o->workspaces->length; i++) {
         struct sway_workspace *ws = o->workspaces->items[i];
         overview_collect_workspace(ws, o, active_ws,
-                                   renderer, alloc, fmt, osc, bt, &con_idx);
+                                   renderer, alloc, fmt, osc, bt, &con_idx,
+                                   content);
       }
     }
-    overview_layout_and_enable(output, true);
+    overview_layout_grid(output);
   } else {
     overview_collect_workspace(active_ws, output, active_ws,
-                               renderer, alloc, fmt, scale, bt, &con_idx);
-    overview_layout_and_enable(output, false);
+                               renderer, alloc, fmt, scale, bt, &con_idx,
+                               content);
+    overview_layout_grid(output);
   }
 }

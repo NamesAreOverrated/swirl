@@ -27,25 +27,29 @@ static struct cmd_results *minimize_hide(struct sway_container *con) {
 }
 
 static struct cmd_results *minimize_show(void) {
-	if (!root->minimized->length) {
+	struct sway_seat *seat = input_manager_current_seat();
+	struct sway_workspace *ws = seat_get_focused_workspace(seat);
+	if (!ws || !ws->minimized->length) {
 		return cmd_results_new(CMD_INVALID, "Minimize pool is empty");
 	}
-	struct sway_container *con = root->minimized->items[0];
+	struct sway_container *con = ws->minimized->items[0];
 	root_minimized_show(con);
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }
 
 static struct cmd_results *minimize_show_n(int n) {
-	if (!root->minimized->length) {
+	struct sway_seat *seat = input_manager_current_seat();
+	struct sway_workspace *ws = seat_get_focused_workspace(seat);
+	if (!ws || !ws->minimized->length) {
 		return cmd_results_new(CMD_INVALID, "Minimize pool is empty");
 	}
-	if (n < 1 || n > root->minimized->length) {
+	if (n < 1 || n > ws->minimized->length) {
 		return cmd_results_new(CMD_INVALID,
 				"No such minimized window: %d (pool has %d)", n,
-				root->minimized->length);
+				ws->minimized->length);
 	}
-	struct sway_container *con = root->minimized->items[n - 1];
+	struct sway_container *con = ws->minimized->items[n - 1];
 	root_minimized_show(con);
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);
@@ -106,7 +110,8 @@ struct cmd_results *cmd_minimize(int argc, char **argv) {
 		}
 		return minimize_show();
 	} else if (strcmp(argv[0], "overview") == 0) {
-		overview_set_params(OVERVIEW_MINIMIZED, OVERVIEW_RESTORE);
+		overview_set_params(OVERVIEW_MINIMIZED, OVERVIEW_RESTORE,
+				OVERVIEW_CONTENT_MINIMIZED);
 		overview_toggle();
 		return cmd_results_new(CMD_SUCCESS, NULL);
 	}

@@ -76,14 +76,12 @@ struct sway_root *root_create(struct wl_display *wl_display) {
 	root->outputs = create_list();
 	root->non_desktop_outputs = create_list();
 	root->scratchpad = create_list();
-	root->minimized = create_list();
 
 	return root;
 }
 
 void root_destroy(struct sway_root *root) {
 	list_free(root->scratchpad);
-	list_free(root->minimized);
 	list_free(root->non_desktop_outputs);
 	list_free(root->outputs);
 	wlr_scene_node_destroy(&root->root_scene->tree.node);
@@ -266,7 +264,11 @@ void root_minimize_container(struct sway_container *con) {
 		container_reap_empty(parent);
 	}
 	con->minimized = true;
-	list_add(root->minimized, con);
+	// Park it in the source workspace's per-workspace pool so the per-workspace
+	// overview can scope minimized windows correctly.
+	if (ws) {
+		list_add(ws->minimized, con);
+	}
 	// Hide the whole container subtree; the container keeps its scene node
 	// under the (now inactive) tiling/floating layer so it can be re-shown.
 	wlr_scene_node_set_enabled(&con->scene_tree->node, false);
@@ -278,6 +280,21 @@ void root_minimize_container(struct sway_container *con) {
 
 	ipc_event_window(con, "move");
 	ipc_event_minimize(con, true);
+}
+
+void root_minimized_remove(struct sway_container *con) {
+	for (int i = 0; i < root->outputs->length; ++i) {
+		struct sway_output *output = root->outputs->items[i];
+		for (int j = 0; j < output->workspaces->length; ++j) {
+			struct sway_workspace *ws =
+				output->workspaces->items[j];
+			int index = list_find(ws->minimized, con);
+			if (index != -1) {
+				list_del(ws->minimized, index);
+				return;
+			}
+		}
+	}
 }
 
 void root_minimized_show(struct sway_container *con) {
@@ -292,10 +309,7 @@ void root_minimized_show(struct sway_container *con) {
 		return;
 	}
 
-	int index = list_find(root->minimized, con);
-	if (index != -1) {
-		list_del(root->minimized, index);
-	}
+	root_minimized_remove(con);
 	con->minimized = false;
 
 	if (new_ws->fullscreen) {
@@ -358,11 +372,19 @@ void root_for_each_container(void (*f)(struct sway_container *con, void *data),
 		}
 	}
 
-	// Minimize pool
-	for (int i = 0; i < root->minimized->length; ++i) {
-		struct sway_container *container = root->minimized->items[i];
-		f(container, data);
-		container_for_each_child(container, f, data);
+	// Minimize pools (one per workspace)
+	for (int i = 0; i < root->outputs->length; ++i) {
+		struct sway_output *output = root->outputs->items[i];
+		for (int j = 0; j < output->workspaces->length; ++j) {
+			struct sway_workspace *ws =
+				output->workspaces->items[j];
+			for (int k = 0; k < ws->minimized->length; ++k) {
+				struct sway_container *container =
+					ws->minimized->items[k];
+				f(container, data);
+				container_for_each_child(container, f, data);
+			}
+		}
 	}
 
 	// Saved workspaces

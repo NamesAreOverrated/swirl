@@ -225,6 +225,7 @@ struct sway_workspace *workspace_create(struct sway_output *output,
 	ws->layout = L_HORIZ;
 	ws->floating = create_list();
 	ws->tiling = create_list();
+	ws->minimized = create_list();
 	ws->output_priority = create_list();
 
 	ws->viewport_x = 0;
@@ -291,6 +292,24 @@ void workspace_destroy(struct sway_workspace *workspace) {
 		return;
 	}
 
+	// Destroy any minimized containers still parked in this workspace's pool
+	// so they don't leak. Snapshot first because container_destroy() removes
+	// the container from the pool while we iterate.
+	int n_min = workspace->minimized->length;
+	if (n_min) {
+		struct sway_container **min_snap =
+			malloc(sizeof(struct sway_container *) * n_min);
+		if (min_snap) {
+			for (int i = 0; i < n_min; i++) {
+				min_snap[i] = workspace->minimized->items[i];
+			}
+			for (int i = 0; i < n_min; i++) {
+				container_destroy(min_snap[i]);
+			}
+			free(min_snap);
+		}
+	}
+
 	scene_node_disown_children(workspace->layers.tiling);
 	scene_node_disown_children(workspace->layers.fullscreen);
 	scene_node_disown_children(workspace->layers.floating);
@@ -303,6 +322,7 @@ void workspace_destroy(struct sway_workspace *workspace) {
 	list_free_items_and_destroy(workspace->output_priority);
 	list_free(workspace->floating);
 	list_free(workspace->tiling);
+	list_free(workspace->minimized);
 	list_free(workspace->current.floating);
 	list_free(workspace->current.tiling);
 	free(workspace);
@@ -324,7 +344,7 @@ void workspace_begin_destroy(struct sway_workspace *workspace) {
 }
 
 void workspace_consider_destroy(struct sway_workspace *ws) {
-	if (ws->tiling->length || ws->floating->length) {
+	if (ws->tiling->length || ws->floating->length || ws->minimized->length) {
 		return;
 	}
 
@@ -1632,6 +1652,43 @@ void workspace_swap_columns(struct sway_container *a, struct sway_container *b) 
 	if (ws_b != ws_a) workspace_update_representation(ws_b);
 	node_set_dirty(&a->node);
 	node_set_dirty(&b->node);
+}
+
+void workspace_swap_floating(struct sway_container *a, struct sway_container *b) {
+	if (a == b) return;
+	struct sway_workspace *ws_a = a->pending.workspace;
+	struct sway_workspace *ws_b = b->pending.workspace;
+	double ax = a->pending.x, ay = a->pending.y;
+	double bx = b->pending.x, by = b->pending.y;
+	if (ws_a == ws_b) {
+		// Same workspace: trade on-screen positions.
+		a->pending.x = bx; a->pending.y = by;
+		b->pending.x = ax; b->pending.y = ay;
+		node_set_dirty(&a->node);
+		node_set_dirty(&b->node);
+	} else {
+		// Cross-workspace: swap which workspace they belong to and trade
+		// their positions (pending.x/y are absolute, so they also exchange
+		// screen positions).
+		container_detach(a);
+		container_detach(b);
+		list_add(ws_b->floating, a);
+		list_add(ws_a->floating, b);
+		a->pending.workspace = ws_b;
+		b->pending.workspace = ws_a;
+		a->pending.x = bx; a->pending.y = by;
+		b->pending.x = ax; b->pending.y = ay;
+		container_for_each_child(a, set_workspace, NULL);
+		container_for_each_child(b, set_workspace, NULL);
+		container_handle_fullscreen_reparent(a);
+		container_handle_fullscreen_reparent(b);
+		node_set_dirty(&ws_a->node);
+		node_set_dirty(&ws_b->node);
+		node_set_dirty(&a->node);
+		node_set_dirty(&b->node);
+	}
+	workspace_update_representation(ws_a);
+	if (ws_b != ws_a) workspace_update_representation(ws_b);
 }
 
 void workspace_fit_new_column(struct sway_workspace *ws,

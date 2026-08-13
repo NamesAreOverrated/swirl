@@ -51,6 +51,7 @@ struct sway_workspace {
 	struct sway_output *output; // NULL if no outputs are connected
 	list_t *floating;           // struct sway_container
 	list_t *tiling;             // struct sway_container
+	list_t *minimized;          // struct sway_container
 	list_t *output_priority;
 	bool urgent;
 
@@ -155,6 +156,7 @@ struct sway_workspace *workspace_insert_column(struct sway_workspace *ws,
 		struct sway_container *con, int index);
 
 void workspace_swap_columns(struct sway_container *a, struct sway_container *b);
+void workspace_swap_floating(struct sway_container *a, struct sway_container *b);
 void workspace_fit_new_column(struct sway_workspace *ws,
 		struct sway_container *col, int idx);
 /**
