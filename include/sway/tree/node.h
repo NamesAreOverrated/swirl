@@ -45,6 +45,11 @@ struct sway_node {
 	// the current.
 	bool dirty;
 
+	// True while the container is being actively dragged (floating move), so
+	// the transaction layer can suppress position animations and track the
+	// cursor 1:1.
+	bool dragging;
+
 	struct {
 		struct wl_signal destroy;
 	} events;

@@ -267,26 +267,38 @@ static void apply_container_state(struct sway_container *container,
   if (!is_tab_stack_child && !is_tiled && container->scene_tree &&
       !container->node.destroying &&
       (old.x != container->current.x || old.y != container->current.y)) {
-    double dist = fabs(container->current.x - old.x) +
-      fabs(container->current.y - old.y);
-    if (dist >= 10.0) {
-      double from_x = container->scene_tree->node.x;
-      double from_y = container->scene_tree->node.y;
-      wlr_scene_node_set_position(&container->scene_tree->node,
-          (int)container->current.x, (int)container->current.y);
-
+    double from_x = container->scene_tree->node.x;
+    double from_y = container->scene_tree->node.y;
+    if (container->node.dragging) {
+      // Don't spring while the user is actively dragging: retarget the single
+      // position animation with an instant spec so the window tracks the
+      // cursor 1:1 (wlr_scene_animate_position retargets, it never stacks).
       struct wlr_scene_anim_spec spec = {
-          .easing = WLR_EASING_SPRING,
-          .damping_ratio = 1.0,
-          .stiffness = 1200.0,
-          .epsilon = 0.001,
+          .easing = WLR_EASING_LINEAR,
+          .duration_ms = 1,
       };
       wlr_scene_animate_position(server.animator, &container->scene_tree->node,
           from_x, from_y, container->current.x, container->current.y,
           &spec, NULL, NULL);
     } else {
-      wlr_scene_node_set_position(&container->scene_tree->node,
-          (int)container->current.x, (int)container->current.y);
+      double dist = fabs(container->current.x - old.x) +
+        fabs(container->current.y - old.y);
+      if (dist >= 10.0) {
+        wlr_scene_node_set_position(&container->scene_tree->node,
+            (int)container->current.x, (int)container->current.y);
+        struct wlr_scene_anim_spec spec = {
+            .easing = WLR_EASING_SPRING,
+            .damping_ratio = 1.0,
+            .stiffness = 1200.0,
+            .epsilon = 0.001,
+        };
+        wlr_scene_animate_position(server.animator,
+            &container->scene_tree->node, from_x, from_y,
+            container->current.x, container->current.y, &spec, NULL, NULL);
+      } else {
+        wlr_scene_node_set_position(&container->scene_tree->node,
+            (int)container->current.x, (int)container->current.y);
+      }
     }
   }
 

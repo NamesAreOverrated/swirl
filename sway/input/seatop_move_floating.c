@@ -11,9 +11,10 @@ struct seatop_move_floating_event {
 static void finalize_move(struct sway_seat *seat) {
 	struct seatop_move_floating_event *e = seat->seatop_data;
 
-	// We "move" the container to its own location
+ 	// We "move" the container to its own location
 	// so it discovers its output again.
 	container_floating_move_to(e->con, e->con->pending.x, e->con->pending.y);
+	e->con->node.dragging = false;
 	transaction_commit_dirty();
 
 	seatop_begin_default(seat);
@@ -44,6 +45,7 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 static void handle_unref(struct sway_seat *seat, struct sway_container *con) {
 	struct seatop_move_floating_event *e = seat->seatop_data;
 	if (e->con == con) {
+		e->con->node.dragging = false;
 		seatop_begin_default(seat);
 	}
 }
@@ -65,7 +67,8 @@ void seatop_begin_move_floating(struct sway_seat *seat,
 	if (!e) {
 		return;
 	}
-	e->con = con;
+ 	e->con = con;
+	con->node.dragging = true;
 	e->dx = cursor->cursor->x - con->pending.x;
 	e->dy = cursor->cursor->y - con->pending.y;
 
