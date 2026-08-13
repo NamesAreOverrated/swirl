@@ -4,6 +4,7 @@
 #include "sway/commands.h"
 #include "sway/output.h"
 #include "sway/desktop/transaction.h"
+#include "sway/desktop/overview.h"
 #include "sway/input/seat.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
@@ -37,34 +38,17 @@ static bool test_mark(struct sway_container *container, void *mark) {
 }
 
 struct cmd_results *cmd_swap(int argc, char **argv) {
-	// 0 args: [con_id=X] swap — criteria-based swap
+	// 0 args: [con_id=X] swap — delegate to the shared overview swap logic
+	// so the script and the graphical overview stay in sync.
 	if (argc == 0) {
 		struct sway_seat *seat = input_manager_current_seat();
 		struct sway_container *focus = seat_get_focused_container(seat);
 		struct sway_container *target = config->handler_context.container;
-		if (!focus || !target || focus == target) {
+		if (!focus || !target) {
 			return cmd_results_new(CMD_SUCCESS, NULL);
 		}
-
-		struct sway_container *fc = container_toplevel_ancestor(focus);
-		struct sway_container *tc = container_toplevel_ancestor(target);
-
-		if (fc->pending.workspace && tc->pending.workspace &&
-				list_find(fc->pending.workspace->tiling, fc) >= 0 &&
-				list_find(tc->pending.workspace->tiling, tc) >= 0 &&
-				fc != tc) {
-			workspace_swap_columns(fc, tc);
-			seat_set_focus_raw(seat, &target->node);
-		} else {
-			container_swap(focus, target);
-		}
-
-		arrange_workspace(focus->pending.workspace);
-		if (target->pending.workspace &&
-				target->pending.workspace != focus->pending.workspace) {
-			arrange_workspace(target->pending.workspace);
-		}
-		transaction_commit_dirty();
+		overview_swap_container(container_toplevel_ancestor(focus),
+				container_toplevel_ancestor(target), seat);
 		return cmd_results_new(CMD_SUCCESS, NULL);
 	}
 

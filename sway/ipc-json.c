@@ -22,6 +22,7 @@
 #include "sway/input/seat.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 #include "sway/desktop/idle_inhibit_v1.h"
+#include "sway/desktop/overview.h"
 
 #if WLR_HAS_LIBINPUT_BACKEND
 #include <wlr/backend/libinput.h>
@@ -1493,4 +1494,64 @@ json_object *ipc_json_get_binding_mode(void) {
 	json_object_object_add(current_mode, "name",
 			json_object_new_string(config->current_mode->name));
 	return current_mode;
+}
+
+// A column container has no view of its own; descend to find a representative
+// view for labelling (the id passed to clients stays the column so pull/swap
+// operate on the whole column, matching the overview).
+static struct sway_view *overview_representative_view(
+		struct sway_container *con) {
+	if (con->view)
+		return con->view;
+	for (int i = 0; i < con->current.children->length; i++) {
+		struct sway_view *v =
+			overview_representative_view(con->current.children->items[i]);
+		if (v)
+			return v;
+	}
+	return NULL;
+}
+
+json_object *ipc_json_get_overview_targets(enum overview_scope scope,
+		enum overview_action action, int content_flags,
+		struct sway_seat *seat) {
+	json_object *arr = json_object_new_array();
+	list_t *targets = create_list();
+	overview_collect_targets(targets, scope, action, content_flags, seat);
+	struct sway_container *focus = seat ? seat_get_focused_container(seat) : NULL;
+	if (focus)
+		focus = container_toplevel_ancestor(focus);
+	for (int i = 0; i < targets->length; i++) {
+		struct overview_target *t = targets->items[i];
+		struct sway_container *con = t->con;
+		// Container may be a column without its own view; use a
+		// representative child view for the label (the id stays the column
+		// so pull/swap operate on the whole column, matching the overview).
+		struct sway_view *v = overview_representative_view(con);
+		json_object *o = json_object_new_object();
+		json_object_object_add(o, "id",
+			json_object_new_int((int)con->node.id));
+		const char *title = v ? view_get_title(v) : NULL;
+		json_object_object_add(o, "name",
+			json_object_new_string(title ? title : ""));
+		const char *app_id = v ? view_get_app_id(v) : NULL;
+		json_object_object_add(o, "app_id",
+			json_object_new_string(app_id ? app_id : ""));
+		const char *type = "tiled";
+		if (t->type == OVERVIEW_CONTENT_FLOATING)
+			type = "floating";
+		else if (t->type == OVERVIEW_CONTENT_MINIMIZED)
+			type = "minimized";
+		json_object_object_add(o, "type", json_object_new_string(type));
+		const char *ws_name = con->pending.workspace
+			? con->pending.workspace->name : "";
+		json_object_object_add(o, "workspace",
+			json_object_new_string(ws_name ? ws_name : ""));
+		json_object_object_add(o, "focused",
+			json_object_new_boolean(focus == con));
+		json_object_array_add(arr, o);
+		free(t);
+	}
+	list_free(targets);
+	return arr;
 }

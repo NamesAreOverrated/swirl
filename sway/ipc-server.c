@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/un.h>
@@ -16,6 +17,7 @@
 #include <wayland-server-core.h>
 #include "sway/commands.h"
 #include "sway/config.h"
+#include "sway/desktop/overview.h"
 #include "sway/desktop/transaction.h"
 #include "sway/ipc-json.h"
 #include "sway/ipc-server.h"
@@ -940,6 +942,44 @@ void ipc_client_handle_command(struct ipc_client *client, uint32_t payload_lengt
 		// It was decided sway will not support this, just return success:false
 		const char msg[] = "{\"success\": false}";
 		ipc_send_reply(client, payload_type, msg, strlen(msg));
+		goto exit_cleanup;
+	}
+
+	case IPC_GET_OVERVIEW_TARGETS:
+	{
+		enum overview_scope scope = OVERVIEW_ALL;
+		enum overview_action action = OVERVIEW_PULL;
+		if (payload_length > 0) {
+			json_object *req = json_tokener_parse(buf);
+			if (req) {
+				json_object *o;
+				if (json_object_object_get_ex(req, "scope", &o)) {
+					const char *s = json_object_get_string(o);
+					if (strcasecmp(s, "current") == 0)
+						scope = OVERVIEW_CURRENT;
+					else if (strcasecmp(s, "minimized") == 0)
+						scope = OVERVIEW_MINIMIZED;
+					else
+						scope = OVERVIEW_ALL;
+				}
+				if (json_object_object_get_ex(req, "action", &o)) {
+					const char *s = json_object_get_string(o);
+					if (strcasecmp(s, "focus") == 0)
+						action = OVERVIEW_FOCUS;
+					else if (strcasecmp(s, "swap") == 0)
+						action = OVERVIEW_SWAP;
+					else
+						action = OVERVIEW_PULL;
+				}
+				json_object_put(req);
+			}
+		}
+		json_object *targets = ipc_json_get_overview_targets(scope, action,
+			0, input_manager_current_seat());
+		const char *json_string = json_object_to_json_string(targets);
+		ipc_send_reply(client, payload_type, json_string,
+			(uint32_t)strlen(json_string));
+		json_object_put(targets);
 		goto exit_cleanup;
 	}
 

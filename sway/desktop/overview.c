@@ -524,20 +524,42 @@ static void overview_action_focus(struct overview_thumbnail *t) {
   transaction_commit_dirty();
 }
 
-static void overview_action_pull(struct overview_thumbnail *t) {
-  if (!t || !t->con)
+// Core pull logic, shared by the overview and the `pull` command so both
+// stay in sync (pointer-placement for floating, column pull for tiled).
+void overview_pull_container(struct sway_container *target,
+        struct sway_seat *seat) {
+  if (!target || !seat)
     return;
-  struct sway_container *target = container_toplevel_ancestor(t->con);
-  struct sway_workspace *active_ws = output_get_active_workspace(root->outputs->items[0]);
+  target = container_toplevel_ancestor(target);
+  struct sway_workspace *active_ws = seat_get_focused_workspace(seat);
+  if (!active_ws)
+    return;
+
   if (container_is_floating(target)) {
-    // Floating windows aren't columns: relocate the window to the focused
-    // workspace and pull it to the pointer position.
-    struct sway_workspace *src = target->pending.workspace;
-    if (src != active_ws) {
+    if (container_is_scratchpad_hidden(target)) {
+      root_scratchpad_show(target);
+      transaction_commit_dirty();
+      return;
+    }
+    if (target->pending.fullscreen_mode != FULLSCREEN_NONE) {
+      container_set_fullscreen(target, FULLSCREEN_NONE);
+    }
+    struct sway_workspace *old_ws = target->pending.workspace;
+    if (old_ws && old_ws != active_ws) {
+      struct sway_output *old_output = old_ws->output;
       container_detach(target);
       workspace_add_floating(active_ws, target);
+      if (old_output != active_ws->output) {
+        struct wlr_box old_box, new_box;
+        workspace_get_box(old_ws, &old_box);
+        workspace_get_box(active_ws, &new_box);
+        floating_fix_coordinates(target, &old_box, &new_box);
+      }
+      arrange_workspace(old_ws);
+      arrange_workspace(active_ws);
     }
-    struct wlr_cursor *cursor = state.seat->cursor->cursor;
+    // Pull the floating window to the pointer position (centered, clamped).
+    struct wlr_cursor *cursor = seat->cursor->cursor;
     double lx = cursor->x - target->pending.width / 2;
     double ly = cursor->y - target->pending.height / 2;
     struct wlr_output *output =
@@ -553,25 +575,56 @@ static void overview_action_pull(struct overview_thumbnail *t) {
         ly = box.y + box.height - target->pending.height;
     }
     container_floating_move_to(target, lx, ly);
-    seat_set_focus_container(state.seat, target);
+    seat_set_focus_container(seat, target);
+    container_raise_floating(target);
     transaction_commit_dirty();
     return;
   }
-  struct sway_container *target_col = target;
-  struct sway_container *focus = state.focus_con;
+
+  struct sway_container *focus = seat_get_focused_container(seat);
   if (!focus) {
-    seat_set_focus_container(state.seat, target_col);
+    seat_set_focus_container(seat, target);
     transaction_commit_dirty();
     return;
   }
   struct sway_container *focus_col = container_toplevel_ancestor(focus);
+  struct sway_container *target_col = container_toplevel_ancestor(target);
   if (focus_col != target_col) {
     int fi = list_find(active_ws->tiling, focus_col);
     if (fi >= 0) {
       workspace_pull_column(active_ws, target_col, fi + 1);
     }
   }
-  seat_set_focus_container(state.seat, target_col);
+  seat_set_focus_container(seat, target);
+  transaction_commit_dirty();
+}
+
+static void overview_action_pull(struct overview_thumbnail *t) {
+  if (!t || !t->con)
+    return;
+  overview_pull_container(t->con, state.seat);
+}
+
+// Core swap logic, shared by the overview and the `swap` command. Only swaps
+// within the same type (tiled<->tiled, floating<->floating).
+void overview_swap_container(struct sway_container *focus_top,
+        struct sway_container *target, struct sway_seat *seat) {
+  if (!focus_top || !target || focus_top == target)
+    return;
+  bool focus_float = container_is_floating(focus_top);
+  bool target_float = container_is_floating(target);
+  if (focus_float != target_float)
+    return;
+  if (focus_float) {
+    workspace_swap_floating(focus_top, target);
+  } else {
+    workspace_swap_columns(focus_top, target);
+  }
+  seat_set_focus_raw(seat, &target->node);
+  struct sway_workspace *ws_a = focus_top->pending.workspace;
+  struct sway_workspace *ws_b = target->pending.workspace;
+  arrange_workspace(ws_a);
+  if (ws_b != ws_a) arrange_workspace(ws_b);
   transaction_commit_dirty();
 }
 
@@ -583,30 +636,8 @@ static void overview_action_swap(struct overview_thumbnail *t) {
     seat_set_focus_container(state.seat, container_toplevel_ancestor(t->con));
     return;
   }
-  struct sway_container *focus_top = container_toplevel_ancestor(focus);
-  struct sway_container *target = container_toplevel_ancestor(t->con);
-  // Only swap within the same type (tiled<->tiled, floating<->floating).
-  // The overview already filters by focus type in swap mode; this guards
-  // against any mismatch (and clicking the focused tile itself).
-  if (focus_top == target) {
-    return;
-  }
-  bool focus_float = container_is_floating(focus_top);
-  bool target_float = container_is_floating(target);
-  if (focus_float != target_float) {
-    return;
-  }
-  if (focus_float) {
-    workspace_swap_floating(focus_top, target);
-  } else {
-    workspace_swap_columns(focus_top, target);
-  }
-  seat_set_focus_raw(state.seat, &target->node);
-  struct sway_workspace *ws_a = focus_top->pending.workspace;
-  struct sway_workspace *ws_b = target->pending.workspace;
-  arrange_workspace(ws_a);
-  if (ws_b != ws_a) arrange_workspace(ws_b);
-  transaction_commit_dirty();
+  overview_swap_container(container_toplevel_ancestor(focus),
+      container_toplevel_ancestor(t->con), state.seat);
 }
 
 static void overview_action_restore(struct overview_thumbnail *t) {
@@ -786,6 +817,85 @@ static void overview_collect_workspace(struct sway_workspace *ws,
       }
     }
   }
+}
+
+// Lightweight counterpart to overview_collect_workspace / overview_collect_minimized:
+// instead of building rendered thumbnails, gather the eligible top-level
+// containers (with their content type) so non-graphical clients (e.g. the
+// cm-swirl script) can present the exact same candidate set the overview would.
+static void overview_collect_targets_ws(list_t *out,
+		struct sway_workspace *ws, int content) {
+	if (content & OVERVIEW_CONTENT_TILED) {
+		for (int i = 0; i < ws->tiling->length; i++) {
+			struct overview_target *t = malloc(sizeof(*t));
+			t->con = ws->tiling->items[i];
+			t->type = OVERVIEW_CONTENT_TILED;
+			list_add(out, t);
+		}
+	}
+	if (content & OVERVIEW_CONTENT_FLOATING) {
+		for (int i = 0; i < ws->floating->length; i++) {
+			struct overview_target *t = malloc(sizeof(*t));
+			t->con = ws->floating->items[i];
+			t->type = OVERVIEW_CONTENT_FLOATING;
+			list_add(out, t);
+		}
+	}
+	if (content & OVERVIEW_CONTENT_MINIMIZED) {
+		for (int i = 0; i < ws->minimized->length; i++) {
+			struct overview_target *t = malloc(sizeof(*t));
+			t->con = ws->minimized->items[i];
+			t->type = OVERVIEW_CONTENT_MINIMIZED;
+			list_add(out, t);
+		}
+	}
+}
+
+void overview_collect_targets(list_t *out, enum overview_scope scope,
+		enum overview_action action, int content_flags,
+		struct sway_seat *seat) {
+	if (!out)
+		return;
+
+	// Mirror overview_set_params: default to showing everything for
+	// non-minimized scopes when no flags are supplied.
+	if (content_flags == 0 && scope != OVERVIEW_MINIMIZED) {
+		content_flags = OVERVIEW_CONTENT_TILED | OVERVIEW_CONTENT_FLOATING |
+			OVERVIEW_CONTENT_MINIMIZED;
+	}
+
+	// Mirror overview_toggle: in swap mode, only offer tiles matching the
+	// focused container's type so the picker presents valid swap partners.
+	if (action == OVERVIEW_SWAP && seat) {
+		struct sway_container *focus = seat_get_focused_container(seat);
+		if (focus) {
+			content_flags =
+				container_is_floating(container_toplevel_ancestor(focus))
+				? OVERVIEW_CONTENT_FLOATING
+				: OVERVIEW_CONTENT_TILED;
+		}
+	}
+
+	if (scope == OVERVIEW_MINIMIZED) {
+		content_flags = OVERVIEW_CONTENT_MINIMIZED;
+	}
+
+	if (scope == OVERVIEW_CURRENT) {
+		struct sway_output *output = root->outputs->length
+			? root->outputs->items[0] : NULL;
+		struct sway_workspace *ws = output
+			? output_get_active_workspace(output) : NULL;
+		if (ws)
+			overview_collect_targets_ws(out, ws, content_flags);
+	} else {
+		for (int oi = 0; oi < root->outputs->length; oi++) {
+			struct sway_output *o = root->outputs->items[oi];
+			for (int i = 0; i < o->workspaces->length; i++) {
+				overview_collect_targets_ws(out, o->workspaces->items[i],
+					content_flags);
+			}
+		}
+	}
 }
 
 static void overview_layout_grid(struct sway_output *output) {

@@ -4,6 +4,7 @@
 #include "sway/output.h"
 #include "sway/tree/container.h"
 #include "sway/input/input-manager.h"
+#include "sway/desktop/overview.h"
 
 json_object *ipc_json_get_version(void);
 
@@ -16,5 +17,9 @@ json_object *ipc_json_describe_node_recursive(struct sway_node *node);
 json_object *ipc_json_describe_input(struct sway_input_device *device);
 json_object *ipc_json_describe_seat(struct sway_seat *seat);
 json_object *ipc_json_describe_bar_config(struct bar_config *bar);
+
+json_object *ipc_json_get_overview_targets(enum overview_scope scope,
+		enum overview_action action, int content_flags,
+		struct sway_seat *seat);
 
 #endif
