@@ -239,6 +239,10 @@ void root_scratchpad_hide(struct sway_container *con) {
 }
 
 void root_minimize_container(struct sway_container *con) {
+	sway_log(SWAY_DEBUG, "minimize: root_minimize_container con=%p view=%d children=%d parent=%p ws=%p",
+			(void *)con, con->view ? 1 : 0,
+			con->pending.children ? con->pending.children->length : 0,
+			(void *)con->pending.parent, (void *)con->pending.workspace);
 	if (!sway_assert(!con->minimized, "Container is already minimized")) {
 		return;
 	}

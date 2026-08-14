@@ -21,6 +21,8 @@ static struct cmd_results *minimize_hide(struct sway_container *con) {
 	// Minimize the whole top-level grouping (a column for tiled windows,
 	// the container itself for a lone window / floating). This way hiding
 	// any window in a tiled column hides the entire column.
+	sway_log(SWAY_DEBUG, "minimize: minimize hide cmd con=%p top=%p",
+			(void *)con, (void *)container_toplevel_ancestor(con));
 	root_minimize_container(container_toplevel_ancestor(con));
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);

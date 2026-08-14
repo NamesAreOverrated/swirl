@@ -399,13 +399,19 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
     double lx = cursor->cursor->x - tx;
     double ly = cursor->cursor->y - ty;
     enum titlebar_button tb = titlebar_button_at(cont, lx, ly);
+    sway_log(SWAY_DEBUG, "TB: press cont=%p cur=(%.0f,%.0f) titlebar=(%d,%d) lx=%.0f ly=%.0f tb=%d",
+        (void *)cont, cursor->cursor->x, cursor->cursor->y, tx, ty, lx, ly, tb);
     if (tb != TB_NONE) {
       seat_set_focus_container(seat, cont);
       if (tb == TB_MINIMIZE) {
+        sway_log(SWAY_DEBUG, "TB: minimize button hit -> root_minimize_container top=%p",
+            (void *)container_toplevel_ancestor(cont));
         root_minimize_container(container_toplevel_ancestor(cont));
       } else if (tb == TB_MAXIMIZE) {
+        sway_log(SWAY_DEBUG, "TB: maximize button hit cont=%p", (void *)cont);
         container_toggle_maximize(cont);
       } else if (tb == TB_CLOSE) {
+        sway_log(SWAY_DEBUG, "TB: close button hit cont=%p", (void *)cont);
         if (cont->view) {
           view_close(cont->view);
         }
@@ -539,6 +545,8 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 	if (config->tiling_drag && (mod_move_btn_pressed || titlebar_left_btn_pressed) &&
 			state == WL_POINTER_BUTTON_STATE_PRESSED && !is_floating_or_child &&
 			cont && cont->pending.fullscreen_mode == FULLSCREEN_NONE) {
+		sway_log(SWAY_DEBUG, "TB: starting tiling move cont=%p cur=(%.0f,%.0f)",
+				(void *)cont, cursor->cursor->x, cursor->cursor->y);
 		// If moving a container by its title bar, use a threshold for the drag
 		if (!mod_pressed && config->tiling_drag_threshold > 0) {
 			seatop_begin_move_tiling_threshold(seat, cont);

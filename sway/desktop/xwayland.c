@@ -647,6 +647,8 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 		// Match `minimize hide` semantics: minimize the whole grouping (a
 		// column) rather than just the leaf window, so the column stays
 		// intact when restored.
+		sway_log(SWAY_DEBUG, "minimize: xwayland request top=%p view=%p",
+				(void *)container_toplevel_ancestor(view->container), (void *)view);
 		root_minimize_container(container_toplevel_ancestor(view->container));
 	} else {
 		// Only call a window out of the pool if sway actually parked it;
