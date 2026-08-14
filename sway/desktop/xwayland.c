@@ -471,6 +471,7 @@ static void handle_destroy(struct wl_listener *listener, void *data) {
 
 	wl_list_remove(&xwayland_view->destroy.link);
 	wl_list_remove(&xwayland_view->request_configure.link);
+	wl_list_remove(&xwayland_view->request_maximize.link);
 	wl_list_remove(&xwayland_view->request_fullscreen.link);
 	wl_list_remove(&xwayland_view->request_minimize.link);
 	wl_list_remove(&xwayland_view->request_move.link);
@@ -655,6 +656,27 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 		if (top->minimized) {
 			workspace_minimized_show(top);
 		}
+	}
+	transaction_commit_dirty();
+}
+
+static void handle_request_maximize(struct wl_listener *listener, void *data) {
+	struct sway_xwayland_view *xwayland_view =
+		wl_container_of(listener, xwayland_view, request_maximize);
+	struct sway_view *view = &xwayland_view->view;
+	struct wlr_xwayland_surface *xsurface = view->wlr_xwayland_surface;
+	if (xsurface->surface == NULL || !xsurface->surface->mapped) {
+		return;
+	}
+
+	// The X11 client updated _NET_WM_STATE itself; wlroots already applied
+	// the requested maximized_horz/vert flags before emitting this signal.
+	// Mirror it on sway's side (titlebar button / foreign-toplevel entry
+	// point) so CLIENT_MAXIMIZE requests actually do something.
+	bool requested = xsurface->maximized_horz && xsurface->maximized_vert;
+	struct sway_container *con = view->container;
+	if (requested != con->maximized) {
+		container_toggle_maximize(con);
 	}
 	transaction_commit_dirty();
 }
@@ -860,6 +882,10 @@ struct sway_xwayland_view *create_xwayland_view(struct wlr_xwayland_surface *xsu
 	wl_signal_add(&xsurface->events.request_fullscreen,
 		&xwayland_view->request_fullscreen);
 	xwayland_view->request_fullscreen.notify = handle_request_fullscreen;
+
+	wl_signal_add(&xsurface->events.request_maximize,
+		&xwayland_view->request_maximize);
+	xwayland_view->request_maximize.notify = handle_request_maximize;
 
 	wl_signal_add(&xsurface->events.request_minimize,
 		&xwayland_view->request_minimize);

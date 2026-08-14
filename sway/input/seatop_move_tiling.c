@@ -393,6 +393,8 @@ static void finalize_move(struct sway_seat *seat) {
 		struct sway_container *target = target_node->sway_container;
 		sway_log(SWAY_DEBUG, "DRAG: finalize -> workspace_insert_window target=%p", (void*)target);
 		if (e->split_target) {
+			sway_log(SWAY_DEBUG, "DRAG: titlebar finalize target=%p after=%d",
+				(void*)target, e->insert_after_target);
 			workspace_insert_window(new_ws, con, target,
 				WLR_EDGE_TOP, e->insert_after_target);
 		} else {

@@ -1531,13 +1531,17 @@ struct sway_workspace *workspace_insert_window(struct sway_workspace *ws,
 			|| edge == WLR_EDGE_NONE)) {
 		list_t *children = target_col->pending.children;
 		int ti = list_find(children, target);
-		if (ti >= 0) {
-			list_insert(children, ti + after, view);
-			view->pending.parent = target_col;
-			view->pending.workspace = target_col->pending.workspace;
-			container_for_each_child(view, set_workspace, NULL);
-			container_fit_vertical_children(target_col, view);
+		if (ti < 0) {
+			// target isn't a direct child (e.g. the column container
+			// itself). The view was already detached above — never drop
+			// through without re-parenting it, or it vanishes.
+			ti = after ? children->length : 0;
 		}
+		list_insert(children, ti + after, view);
+		view->pending.parent = target_col;
+		view->pending.workspace = target_col->pending.workspace;
+		container_for_each_child(view, set_workspace, NULL);
+		container_fit_vertical_children(target_col, view);
 		goto cleanup;
 	}
 
