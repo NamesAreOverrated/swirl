@@ -51,9 +51,8 @@ static void handle_outputs_update(
 	// staging tree, which has no outputs. Don't clear the toplevel's output
 	// association in that case, or taskbars (waybar wlr/taskbar) drop the
 	// button because all-outputs defaults to false.
-	struct sway_container *top = view->container ?
-			container_toplevel_ancestor(view->container) : NULL;
-	if (top && top->minimized) {
+	struct sway_container *con = view->container;
+	if (con && con->minimized) {
 		return;
 	}
 
@@ -815,9 +814,9 @@ static void handle_foreign_activate_request(
 	struct sway_view *view = wl_container_of(
 			listener, view, foreign_activate_request);
 	struct wlr_foreign_toplevel_handle_v1_activated_event *event = data;
-	struct sway_container *top = container_toplevel_ancestor(view->container);
-	if (top->minimized) {
-		workspace_minimized_show(top);
+	struct sway_container *con = view->container;
+	if (con->minimized) {
+		workspace_minimized_show(con);
 	}
 	struct sway_seat *seat;
 	wl_list_for_each(seat, &server.input->seats, link) {
@@ -840,15 +839,15 @@ static void handle_foreign_minimize_request(
 			listener, view, foreign_minimize_request);
 	struct wlr_foreign_toplevel_handle_v1_minimized_event *event = data;
 
-	struct sway_container *top = container_toplevel_ancestor(view->container);
+	struct sway_container *con = view->container;
 	if (event->minimized) {
-		if (!top->minimized) {
-			sway_log(SWAY_DEBUG, "minimize: foreign-toplevel request minimized=%d top=%p view=%p",
-					event->minimized, (void *)top, (void *)view);
-			workspace_minimized_hide(top);
+		if (!con->minimized) {
+			sway_log(SWAY_DEBUG, "minimize: foreign-toplevel request minimized=%d view=%p",
+					event->minimized, (void *)view);
+			workspace_minimized_hide(con);
 		}
-	} else if (top->minimized) {
-		workspace_minimized_show(top);
+	} else if (con->minimized) {
+		workspace_minimized_show(con);
 	}
 	transaction_commit_dirty();
 }

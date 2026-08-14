@@ -404,9 +404,9 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
     if (tb != TB_NONE) {
       seat_set_focus_container(seat, cont);
       if (tb == TB_MINIMIZE) {
-        sway_log(SWAY_DEBUG, "TB: minimize button hit -> workspace_minimized_hide top=%p",
-            (void *)container_toplevel_ancestor(cont));
-        workspace_minimized_hide(container_toplevel_ancestor(cont));
+        sway_log(SWAY_DEBUG, "TB: minimize button hit con=%p",
+            (void *)cont);
+        workspace_minimized_hide(cont);
       } else if (tb == TB_MAXIMIZE) {
         sway_log(SWAY_DEBUG, "TB: maximize button hit cont=%p", (void *)cont);
         container_toggle_maximize(cont);

@@ -645,19 +645,18 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 	wlr_xwayland_surface_set_minimized(xsurface, !focused && e->minimize);
 
 	if (e->minimize && !focused) {
-		// Match `minimize hide` semantics: minimize the whole grouping (a
-		// column) rather than just the leaf window, so the column stays
-		// intact when restored.
-		sway_log(SWAY_DEBUG, "minimize: xwayland request top=%p view=%p",
-				(void *)container_toplevel_ancestor(view->container), (void *)view);
-		workspace_minimized_hide(container_toplevel_ancestor(view->container));
+		// Match `minimize hide` semantics: minimize just this window, not
+		// the whole column, so sibling windows stay tiled.
+		sway_log(SWAY_DEBUG, "minimize: xwayland request view=%p",
+				(void *)view);
+		workspace_minimized_hide(view->container);
 	} else if (!e->minimize) {
 		// Only call a window out of the pool if sway actually parked it;
 		// workspace_minimized_show asserts the container is minimized, and a
 		// benign X11 unminimize for a never-minimized window would trip it.
-		struct sway_container *top = container_toplevel_ancestor(view->container);
-		if (top->minimized) {
-			workspace_minimized_show(top);
+		struct sway_container *con = view->container;
+		if (con->minimized) {
+			workspace_minimized_show(con);
 		}
 	}
 	transaction_commit_dirty();

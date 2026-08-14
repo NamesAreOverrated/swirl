@@ -446,10 +446,11 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 
 	// xdg set_minimized is one-way (the protocol has no unminimize request),
 	// so just route it into the native minimize like the titlebar,
-	// foreign-toplevel and xwayland paths.
-	struct sway_container *top = container_toplevel_ancestor(view->container);
-	if (!top->minimized) {
-		workspace_minimized_hide(top);
+	// foreign-toplevel and xwayland paths. Minimize just this window, not
+	// the whole column.
+	struct sway_container *con = view->container;
+	if (!con->minimized) {
+		workspace_minimized_hide(con);
 	}
 	transaction_commit_dirty();
 }
