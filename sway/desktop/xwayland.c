@@ -638,19 +638,20 @@ static void handle_request_minimize(struct wl_listener *listener, void *data) {
 	struct sway_seat *seat = input_manager_current_seat();
 	bool focused = seat_get_focus(seat) == &view->container->node;
 
-	if (focused) {
-		return;
-	}
+	// Always answer so the client's minimized hint stays in sync. When the
+	// focused window asks to minimize itself, deny by reporting non-minimized
+	// (grant-without-minimizing, upstream 4f718e6c stops Steam/Wine from
+	// getting stuck minimized).
+	wlr_xwayland_surface_set_minimized(xsurface, !focused && e->minimize);
 
-	wlr_xwayland_surface_set_minimized(xsurface, e->minimize);
-	if (e->minimize) {
+	if (e->minimize && !focused) {
 		// Match `minimize hide` semantics: minimize the whole grouping (a
 		// column) rather than just the leaf window, so the column stays
 		// intact when restored.
 		sway_log(SWAY_DEBUG, "minimize: xwayland request top=%p view=%p",
 				(void *)container_toplevel_ancestor(view->container), (void *)view);
-		root_minimize_container(container_toplevel_ancestor(view->container));
-	} else {
+		workspace_minimized_hide(container_toplevel_ancestor(view->container));
+	} else if (!e->minimize) {
 		// Only call a window out of the pool if sway actually parked it;
 		// workspace_minimized_show asserts the container is minimized, and a
 		// benign X11 unminimize for a never-minimized window would trip it.

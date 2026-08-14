@@ -845,7 +845,7 @@ static void handle_foreign_minimize_request(
 		if (!top->minimized) {
 			sway_log(SWAY_DEBUG, "minimize: foreign-toplevel request minimized=%d top=%p view=%p",
 					event->minimized, (void *)top, (void *)view);
-			root_minimize_container(top);
+			workspace_minimized_hide(top);
 		}
 	} else if (top->minimized) {
 		workspace_minimized_show(top);

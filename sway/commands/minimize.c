@@ -23,7 +23,7 @@ static struct cmd_results *minimize_hide(struct sway_container *con) {
 	// any window in a tiled column hides the entire column.
 	sway_log(SWAY_DEBUG, "minimize: minimize hide cmd con=%p top=%p",
 			(void *)con, (void *)container_toplevel_ancestor(con));
-	root_minimize_container(container_toplevel_ancestor(con));
+	workspace_minimized_hide(container_toplevel_ancestor(con));
 	transaction_commit_dirty();
 	return cmd_results_new(CMD_SUCCESS, NULL);
 }

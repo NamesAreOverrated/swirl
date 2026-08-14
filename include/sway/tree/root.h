@@ -107,7 +107,7 @@ void root_scratchpad_hide(struct sway_container *con);
  * Minimize a container into its workspace's per-workspace pool. It is detached
  * from the tree, removed from the scene, and parked in ws->minimized.
  */
-void root_minimize_container(struct sway_container *con);
+void workspace_minimized_hide(struct sway_container *con);
 
 /**
  * Report which workspace pool a container is parked in, or NULL if it is not

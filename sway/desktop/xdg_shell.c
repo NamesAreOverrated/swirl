@@ -16,6 +16,7 @@
 #include "sway/output.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
+#include "sway/tree/root.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
 #include "sway/xdg_decoration.h"
@@ -413,11 +414,44 @@ static void handle_new_popup(struct wl_listener *listener, void *data) {
 static void handle_request_maximize(struct wl_listener *listener, void *data) {
 	struct sway_xdg_shell_view *xdg_shell_view =
 		wl_container_of(listener, xdg_shell_view, request_maximize);
-	struct wlr_xdg_toplevel *toplevel = xdg_shell_view->view.wlr_xdg_toplevel;
+	struct sway_view *view = &xdg_shell_view->view;
+	struct wlr_xdg_toplevel *toplevel = view->wlr_xdg_toplevel;
 	if (!toplevel->base->surface->mapped) {
 		return;
 	}
+
+	// Mirror the request into the native maximize so Wayland-native clients
+	// behave like X11 ones (see xwayland handle_request_maximize). The
+	// requested != maximized guard prevents redundant toggles on re-affirmed
+	// state requests.
+	bool requested = toplevel->requested.maximized;
+	struct sway_container *con = view->container;
+	if (con && requested != con->maximized) {
+		container_toggle_maximize(con);
+	}
+	// Protocol requirement: acknowledge state requests with a configure even
+	// when the requested state was not adopted.
 	wlr_xdg_surface_schedule_configure(toplevel->base);
+	transaction_commit_dirty();
+}
+
+static void handle_request_minimize(struct wl_listener *listener, void *data) {
+	struct sway_xdg_shell_view *xdg_shell_view =
+		wl_container_of(listener, xdg_shell_view, request_minimize);
+	struct sway_view *view = &xdg_shell_view->view;
+	struct wlr_xdg_toplevel *toplevel = view->wlr_xdg_toplevel;
+	if (!toplevel->base->surface->mapped) {
+		return;
+	}
+
+	// xdg set_minimized is one-way (the protocol has no unminimize request),
+	// so just route it into the native minimize like the titlebar,
+	// foreign-toplevel and xwayland paths.
+	struct sway_container *top = container_toplevel_ancestor(view->container);
+	if (!top->minimized) {
+		workspace_minimized_hide(top);
+	}
+	transaction_commit_dirty();
 }
 
 static void handle_request_fullscreen(struct wl_listener *listener, void *data) {
@@ -493,6 +527,7 @@ static void handle_unmap(struct wl_listener *listener, void *data) {
 
 	wl_list_remove(&xdg_shell_view->new_popup.link);
 	wl_list_remove(&xdg_shell_view->request_maximize.link);
+	wl_list_remove(&xdg_shell_view->request_minimize.link);
 	wl_list_remove(&xdg_shell_view->request_fullscreen.link);
 	wl_list_remove(&xdg_shell_view->request_move.link);
 	wl_list_remove(&xdg_shell_view->request_resize.link);
@@ -527,6 +562,16 @@ static void handle_map(struct wl_listener *listener, void *data) {
 		toplevel->requested.fullscreen_output,
 		csd);
 
+	// Advertise the window management capabilities the fork actually
+	// implements so clients enable their maximize/minimize UI and send the
+	// corresponding requests (handled by handle_request_maximize/minimize).
+	// WINDOW_MENU is intentionally omitted: sway does not handle
+	// request_show_window_menu.
+	wlr_xdg_toplevel_set_wm_capabilities(toplevel,
+			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE |
+			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN |
+			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE);
+
 	transaction_commit_dirty();
 
 	xdg_shell_view->new_popup.notify = handle_new_popup;
@@ -536,6 +581,10 @@ static void handle_map(struct wl_listener *listener, void *data) {
 	xdg_shell_view->request_maximize.notify = handle_request_maximize;
 	wl_signal_add(&toplevel->events.request_maximize,
 			&xdg_shell_view->request_maximize);
+
+	xdg_shell_view->request_minimize.notify = handle_request_minimize;
+	wl_signal_add(&toplevel->events.request_minimize,
+			&xdg_shell_view->request_minimize);
 
 	xdg_shell_view->request_fullscreen.notify = handle_request_fullscreen;
 	wl_signal_add(&toplevel->events.request_fullscreen,
