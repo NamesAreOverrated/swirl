@@ -14,6 +14,7 @@
 #include "sway/output.h"
 #include "sway/server.h"
 #include "sway/scene_descriptor.h"
+#include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
 #include "sway/tree/root.h"
 #include "sway/tree/view.h"
@@ -376,6 +377,7 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 	bool mod_move_btn_pressed = mod_pressed && button == mod_move_btn;
 	bool mod_resize_btn_pressed = mod_pressed && button == mod_resize_btn;
 	bool titlebar_left_btn_pressed = on_titlebar && button == BTN_LEFT;
+	bool titlebar_right_btn_pressed = on_titlebar && button == BTN_RIGHT;
 
   // Handle mouse bindings
   if (trigger_pointer_button_binding(seat, device, button, state, modifiers,
@@ -383,13 +385,15 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
     return;
   }
 
-  // Handle titlebar control buttons (minimize / maximize / close).
-  // Gate on the container + button only; titlebar_button_at() precisely
-  // decides whether the click landed on a button, so this works regardless
-  // of layout (tiled/tabbed/stacked/floating) and independent of the
-  // on_titlebar/on_border flags (which misclassify tabbed/stacked titlebars
-  // as borders).
-  if (cont && button == BTN_LEFT &&
+  // Handle titlebar control buttons (floating toggle / minimize / maximize /
+  // close). Gate on the container + button only; titlebar_button_at()
+  // precisely decides whether the click landed on a button, so this works
+  // regardless of layout (tiled/tabbed/stacked/floating) and independent of
+  // the on_titlebar/on_border flags (which misclassify tabbed/stacked
+  // titlebars as borders). Any press on a button is consumed -- even a right
+  // click, which has no action here, must never fall through into titlebar
+  // resize or focus-change logic.
+  if (cont && (button == BTN_LEFT || button == BTN_RIGHT) &&
       state == WL_POINTER_BUTTON_STATE_PRESSED) {
     // The buttons are children of cont->title_bar.tree; get that tree's true
     // absolute position from the scene graph so the click coordinate is
@@ -403,17 +407,32 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
         (void *)cont, cursor->cursor->x, cursor->cursor->y, tx, ty, lx, ly, tb);
     if (tb != TB_NONE) {
       seat_set_focus_container(seat, cont);
-      if (tb == TB_MINIMIZE) {
-        sway_log(SWAY_DEBUG, "TB: minimize button hit con=%p",
-            (void *)cont);
-        workspace_minimized_hide(cont);
-      } else if (tb == TB_MAXIMIZE) {
-        sway_log(SWAY_DEBUG, "TB: maximize button hit cont=%p", (void *)cont);
-        container_toggle_maximize(cont);
-      } else if (tb == TB_CLOSE) {
-        sway_log(SWAY_DEBUG, "TB: close button hit cont=%p", (void *)cont);
-        if (cont->view) {
-          view_close(cont->view);
+      if (button == BTN_LEFT) {
+        if (tb == TB_FLOATING) {
+          sway_log(SWAY_DEBUG, "TB: float button hit con=%p",
+              (void *)cont);
+          struct sway_container *target = cont;
+          if (container_is_floating_or_child(target)) {
+            while (target->pending.parent) {
+              target = target->pending.parent;
+            }
+          }
+          container_set_floating(target, !container_is_floating(target));
+          if (target->pending.workspace) {
+            arrange_workspace(target->pending.workspace);
+          }
+        } else if (tb == TB_MINIMIZE) {
+          sway_log(SWAY_DEBUG, "TB: minimize button hit con=%p",
+              (void *)cont);
+          workspace_minimized_hide(cont);
+        } else if (tb == TB_MAXIMIZE) {
+          sway_log(SWAY_DEBUG, "TB: maximize button hit cont=%p", (void *)cont);
+          container_toggle_maximize(cont);
+        } else if (tb == TB_CLOSE) {
+          sway_log(SWAY_DEBUG, "TB: close button hit cont=%p", (void *)cont);
+          if (cont->view) {
+            view_close(cont->view);
+          }
         }
       }
       transaction_commit_dirty();
@@ -463,7 +482,8 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 	}
 
 	// Handle tiling resize via mod
-	if (cont && !is_floating_or_child && mod_pressed && mod_resize_btn_pressed &&
+	if (cont && !is_floating_or_child && (mod_resize_btn_pressed ||
+			titlebar_right_btn_pressed) &&
 			state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		struct wlr_box screen_box;
 		container_get_screen_box(cont, &screen_box);
@@ -527,8 +547,8 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 			return;
 		}
 
-		// Via mod+click
-		if (mod_resize_btn_pressed) {
+		// Via mod+click or titlebar right click
+		if (mod_resize_btn_pressed || titlebar_right_btn_pressed) {
 			struct sway_container *floater = container_toplevel_ancestor(cont);
 			edge = 0;
 			edge |= cursor->cursor->x > floater->pending.x + floater->pending.width / 2 ?

@@ -525,7 +525,7 @@ enum titlebar_button titlebar_button_at(struct sway_container *con,
   if (lx < 0 || ly < 0) {
     return TB_NONE;
   }
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 4; i++) {
     struct wlr_box *b = &con->title_bar.button_box[i];
     if (lx >= b->x && lx <= b->x + b->width &&
         ly >= b->y && ly <= b->y + b->height) {
@@ -570,8 +570,8 @@ void container_arrange_title_bar(struct sway_container *con) {
   // the title bar tree alongside the title text, and only for real views.
   if (con->view && con->pending.border == B_NORMAL) {
     struct border_colors *c = container_get_current_colors(con);
-    static const char *init_glyph[3] = {"\u2014", "\u25a2", "\u2715"};
-    for (int i = 0; i < 3; i++) {
+static const char *init_glyph[4] = {"\u2691", "\u2014", "\u25a2", "\u2715"};
+    for (int i = 0; i < 4; i++) {
       if (!con->title_bar.button_glyph[i]) {
         con->title_bar.button_glyph[i] = sway_text_node_create(
             con->title_bar.tree, (char *)init_glyph[i], c->text, false);
@@ -581,7 +581,7 @@ void container_arrange_title_bar(struct sway_container *con) {
 
   bool has_buttons = con->pending.border == B_NORMAL &&
       con->title_bar.button_glyph[0] != NULL;
-  int reserved = has_buttons ? 3 * height : 0;
+  int reserved = has_buttons ? 4 * height : 0;
   int right_edge = width - reserved;
 
   pixman_region32_t text_area;
@@ -665,11 +665,12 @@ void container_arrange_title_bar(struct sway_container *con) {
   // server-side decoration bars so CSD/pixel-bordered views stay untouched.
   if (has_buttons) {
     struct border_colors *colors = container_get_current_colors(con);
-    const char *glyph[3] = {"\u2014",
+    const char *glyph[4] = {container_is_floating_or_child(con)
+            ? "\u2690" : "\u2691", "\u2014",
         con->maximized ? "\u25a3" : "\u25a2", "\u2715"};
     int btn = height;  // square, full titlebar height
-    for (int i = 0; i < 3; i++) {
-      int bx = width - (3 - i) * btn;
+    for (int i = 0; i < 4; i++) {
+      int bx = width - (4 - i) * btn;
       struct wlr_box *box = &con->title_bar.button_box[i];
       box->x = bx;
       box->y = 0;
@@ -686,7 +687,7 @@ void container_arrange_title_bar(struct sway_container *con) {
       }
     }
   } else {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
       con->title_bar.button_box[i].width = 0;
       con->title_bar.button_box[i].height = 0;
       if (con->title_bar.button_glyph[i]) {
@@ -772,15 +773,15 @@ void container_update_title_bar(struct sway_container *con) {
   // children of the title bar tree like the title text, and only for real
   // server-side decorated views (con->view != NULL), so split/column
   // titlebars from stock sway are left untouched and free of buttons.
-  static const char *init_glyph[3] = {"\u2014", "\u25a2", "\u2715"};
-  for (int i = 0; i < 3; i++) {
+  static const char *init_glyph[4] = {"\u2691", "\u2014", "\u25a2", "\u2715"};
+  for (int i = 0; i < 4; i++) {
     if (con->title_bar.button_glyph[i]) {
       wlr_scene_node_destroy(con->title_bar.button_glyph[i]->node);
       con->title_bar.button_glyph[i] = NULL;
     }
   }
   if (con->view && con->pending.border == B_NORMAL) {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
       con->title_bar.button_glyph[i] = sway_text_node_create(
           con->title_bar.tree, (char *)init_glyph[i], colors->text, false);
     }

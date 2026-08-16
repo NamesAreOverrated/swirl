@@ -67,9 +67,10 @@ struct sway_container_state {
 
 enum titlebar_button {
   TB_NONE = -1,
-  TB_MINIMIZE = 0,
-  TB_MAXIMIZE = 1,
-  TB_CLOSE = 2,
+  TB_FLOATING = 0,
+  TB_MINIMIZE = 1,
+  TB_MAXIMIZE = 2,
+  TB_CLOSE = 3,
 };
 
 struct sway_container {
@@ -87,8 +88,8 @@ struct sway_container {
     struct sway_text_node *title_text;
     struct sway_text_node *marks_text;
 
-    struct sway_text_node *button_glyph[3];
-    struct wlr_box button_box[3];
+    struct sway_text_node *button_glyph[4];
+    struct wlr_box button_box[4];
   } title_bar;
 
   struct {
