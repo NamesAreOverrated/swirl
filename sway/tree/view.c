@@ -1213,13 +1213,14 @@ void view_center_and_clip_surface(struct sway_view *view) {
 	bool clip_to_geometry = true;
 
 	if (container_is_floating(con) || con->pending.fullscreen_mode != FULLSCREEN_NONE) {
-		// We always center the current coordinates rather than the next, as the
-		// geometry immediately affects the currently active rendering.
-		int x = (int) fmax(0, (con->current.content_width - view->geometry.width) / 2);
-		int y = (int) fmax(0, (con->current.content_height - view->geometry.height) / 2);
+		// Floating views must fill the reserved content area exactly; never
+		// leave padding above/left of the surface, or a seam opens between the
+		// titlebar/border and the view. Transient leftover (while a grid-aligned
+		// client lags a resize) lands at the bottom/right edge and disappears
+		// once the container re-collapses to the committed geometry.
 		clip_to_geometry = !view->using_csd;
 
-		wlr_scene_node_set_position(&view->content_tree->node, x, y);
+		wlr_scene_node_set_position(&view->content_tree->node, 0, 0);
 	} else {
 		wlr_scene_node_set_position(&view->content_tree->node, 0, 0);
 	}

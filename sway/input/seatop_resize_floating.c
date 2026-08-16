@@ -26,6 +26,12 @@ static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 
 	if (seat->cursor->pressed_button_count == 0) {
 		container_set_resizing(con, false);
+		if (con->view) {
+			// Collapse the reservation to the client's committed surface so the
+			// final state can't leave a gap even if the client never commits
+			// the last configure (e.g. a grid-aligned terminal).
+			view_update_size(con->view);
+		}
 		arrange_container(con); // Send configure w/o resizing hint
 		transaction_commit_dirty();
 		seatop_begin_default(seat);

@@ -359,6 +359,15 @@ static void handle_commit(struct wl_listener *listener, void *data) {
 		}
 
 		view_center_and_clip_surface(view);
+	} else if (container_is_floating(view->container) &&
+			(view->container->pending.content_width != view->geometry.width ||
+			 view->container->pending.content_height != view->geometry.height)) {
+		// The client committed without a size change, but the container's
+		// reservation still differs from the committed surface (e.g. the client
+		// rounded to its own grid and sway never adopted that size). Collapse
+		// the reservation back to the surface so no gap remains.
+		view_update_size(view);
+		transaction_commit_dirty_client();
 	}
 
 	if (view->container->node.instruction) {
