@@ -400,6 +400,7 @@ void workspace_minimized_show_on(struct sway_container *con,
 	ipc_event_minimize(con, false);
 	if (old_ws && !old_ws->node.destroying && old_ws != new_ws) {
 		ipc_event_workspace(old_ws, old_ws, "minimized");
+		workspace_consider_destroy(old_ws);
 	}
 	if (!new_ws->node.destroying) {
 		ipc_event_workspace(new_ws, new_ws, "minimized");

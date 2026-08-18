@@ -1794,6 +1794,12 @@ void workspace_pull_column(struct sway_workspace *ws,
 	arrange_workspace(ws);
 	if (old_ws && old_ws != ws)
 		arrange_workspace(old_ws);
+	// Recycle the source workspace once this pull drains it, matching the
+	// cleanup the `move` command performs (consider_destroy self-guards: only
+	// empties that aren't displayed or focused get destroyed).
+	if (old_ws && old_ws != ws && !old_ws->node.destroying) {
+		workspace_consider_destroy(old_ws);
+	}
 }
 
 int workspace_even_freed(struct sway_workspace *ws,

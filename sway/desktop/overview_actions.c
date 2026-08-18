@@ -72,6 +72,9 @@ void overview_pull_container_to(struct sway_container *target,
       }
       arrange_workspace(old_ws);
       arrange_workspace(dest_ws);
+      if (!old_ws->node.destroying) {
+        workspace_consider_destroy(old_ws);
+      }
     }
     // Pull the floating window to the pointer position (centered, clamped).
     struct wlr_cursor *cursor = seat->cursor->cursor;
