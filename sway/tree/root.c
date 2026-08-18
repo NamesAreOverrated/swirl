@@ -347,7 +347,19 @@ void workspace_minimized_show(struct sway_container *con) {
 		sway_log(SWAY_DEBUG, "No focused workspace to show minimized window on");
 		return;
 	}
+	workspace_minimized_show_on(con, new_ws);
+}
 
+void workspace_minimized_show_on(struct sway_container *con,
+		struct sway_workspace *new_ws) {
+	if (!sway_assert(con->minimized, "Container is not in the minimize pool")) {
+		return;
+	}
+	if (!sway_assert(new_ws, "Target workspace is NULL")) {
+		return;
+	}
+
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *old_ws = workspace_minimized_remove(con);
 	con->minimized = false;
 

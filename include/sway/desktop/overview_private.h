@@ -51,6 +51,18 @@ struct overview_state {
 
 extern struct overview_state overview_state;
 
+// Resolve the monitor the overview was invoked on (pointer first, then the
+// focused workspace's output, then the first output).
+struct sway_output *overview_pick_output(struct sway_seat *seat);
+
+// The workspace currently visible on the overview's display output.
+struct sway_workspace *overview_action_current_ws(struct sway_seat *seat);
+
+// Pull a container into a specific workspace (used by the overview click
+// path; the `pull` command targets the focused workspace instead).
+void overview_pull_container_to(struct sway_container *target,
+        struct sway_seat *seat, struct sway_workspace *dest_ws);
+
 // Render-side collection: snapshot every eligible container for a workspace
 // (or every minimized window across all workspaces) into thumbnails mounted
 // on the overlay layer. `con_idx` carries the running digit counter.

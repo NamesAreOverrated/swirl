@@ -9,6 +9,7 @@
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include "list.h"
 #include "sway/config.h"
@@ -28,6 +29,34 @@ struct overview_state overview_state;
 static bool overview_active = false;
 
 static void overview_layout_grid(struct sway_output *output);
+
+// Resolve the monitor the overview was invoked on: the output under the
+// pointer (right-click, gestures, keybind with focus-follows-mouse), then
+// the focused workspace's output, then the first output as a last resort.
+struct sway_output *overview_pick_output(struct sway_seat *seat) {
+  if (seat && seat->cursor && seat->cursor->cursor) {
+    struct wlr_output *wlr_output = wlr_output_layout_output_at(
+        root->output_layout, seat->cursor->cursor->x, seat->cursor->cursor->y);
+    if (wlr_output && wlr_output->data) {
+      struct sway_output *output = wlr_output->data;
+      if (output->enabled) {
+        return output;
+      }
+    }
+  }
+  struct sway_workspace *ws = seat ? seat_get_focused_workspace(seat) : NULL;
+  if (ws && ws->output) {
+    return ws->output;
+  }
+  return root->outputs->length ? root->outputs->items[0] : NULL;
+}
+
+struct sway_workspace *overview_action_current_ws(struct sway_seat *seat) {
+  struct sway_output *output = overview_pick_output(seat);
+  if (!output)
+    return NULL;
+  return output_get_active_workspace(output);
+}
 
 bool overview_is_active(void) { return overview_active; }
 
@@ -117,8 +146,7 @@ void overview_collect_targets(list_t *out, enum overview_scope scope,
 	}
 
 	if (scope == OVERVIEW_CURRENT) {
-		struct sway_output *output = root->outputs->length
-			? root->outputs->items[0] : NULL;
+		struct sway_output *output = overview_pick_output(seat);
 		struct sway_workspace *ws = output
 			? output_get_active_workspace(output) : NULL;
 		if (ws)
@@ -203,10 +231,7 @@ void overview_handle_button(struct sway_seat *seat, uint32_t button,
   if (!t)
     return;
   if (button == BTN_MIDDLE) {
-    struct sway_output *output = NULL;
-    if (root && root->outputs && root->outputs->length > 0) {
-      output = root->outputs->items[0];
-    }
+    struct sway_output *output = overview_pick_output(seat);
     if (output) {
       overview_close_thumbnail(t, output);
     }
@@ -240,15 +265,20 @@ bool overview_handle_key(xkb_keysym_t sym) {
   if (!overview_active)
     return false;
 
+  int digit = -1;
   if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
-    overview_state.digit_buf = overview_state.digit_buf * 10 + (sym - XKB_KEY_0);
+    digit = sym - XKB_KEY_0;
+  } else if (sym >= XKB_KEY_KP_0 && sym <= XKB_KEY_KP_9) {
+    digit = sym - XKB_KEY_KP_0;
+  }
+  if (digit >= 0) {
+    overview_state.digit_buf = overview_state.digit_buf * 10 + digit;
     overview_state.digit_count++;
     if (overview_state.digit_count >= 2) {
       int idx = overview_state.digit_buf;
-      struct sway_container *focus = overview_state.focus_con;
       overview_state.digit_buf = 0;
       overview_state.digit_count = 0;
-      if (idx >= 1 && idx <= overview_state.n_thumbnails && focus) {
+      if (idx >= 1 && idx <= overview_state.n_thumbnails) {
         struct overview_thumbnail *t;
         int i = 0;
         wl_list_for_each(t, &overview_state.thumbnails, link) {
@@ -256,7 +286,7 @@ bool overview_handle_key(xkb_keysym_t sym) {
             break;
           i++;
         }
-        if (t && t->con && t->con != focus) {
+        if (t && t->con) {
           overview_dispatch_action(t);
         }
       }
@@ -498,10 +528,7 @@ static bool overview_setup(struct sway_output *output) {
 }
 
 void overview_toggle(void) {
-  struct sway_output *output = NULL;
-  if (root && root->outputs && root->outputs->length > 0) {
-    output = root->outputs->items[0];
-  }
+  struct sway_output *output = overview_pick_output(input_manager_current_seat());
   if (!output) return;
 
   if (overview_active) { overview_teardown(); return; }

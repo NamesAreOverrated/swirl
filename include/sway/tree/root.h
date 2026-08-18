@@ -126,6 +126,12 @@ struct sway_workspace *workspace_minimized_remove(struct sway_container *con);
  */
 void workspace_minimized_show(struct sway_container *con);
 
+/**
+ * Same as workspace_minimized_show but onto an explicit target workspace.
+ */
+void workspace_minimized_show_on(struct sway_container *con,
+		struct sway_workspace *new_ws);
+
 void root_for_each_workspace(void (*f)(struct sway_workspace *ws, void *data),
 		void *data);
 

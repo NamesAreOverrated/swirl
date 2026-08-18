@@ -20,8 +20,7 @@
 static void overview_action_focus(struct overview_thumbnail *t) {
   if (!t || !t->con)
     return;
-  if (t->ws && root->outputs->length &&
-      t->ws != output_get_active_workspace(root->outputs->items[0])) {
+  if (t->ws && t->ws != seat_get_focused_workspace(overview_state.seat)) {
     workspace_switch(t->ws);
   }
   // Resolve the target after any workspace switch so we never hold a
@@ -32,15 +31,25 @@ static void overview_action_focus(struct overview_thumbnail *t) {
 }
 
 // Core pull logic, shared by the overview and the `pull` command so both
-// stay in sync (pointer-placement for floating, column pull for tiled).
+// stay in sync (pointer-placement for floating, column pull for tiled). The
+// `pull` command targets the focused workspace; the overview click path
+// targets the workspace displayed under the overview (see
+// overview_pull_container_to).
 void overview_pull_container(struct sway_container *target,
         struct sway_seat *seat) {
   if (!target || !seat)
     return;
-  target = container_toplevel_ancestor(target);
   struct sway_workspace *active_ws = seat_get_focused_workspace(seat);
   if (!active_ws)
     return;
+  overview_pull_container_to(target, seat, active_ws);
+}
+
+void overview_pull_container_to(struct sway_container *target,
+        struct sway_seat *seat, struct sway_workspace *dest_ws) {
+  if (!target || !seat || !dest_ws)
+    return;
+  target = container_toplevel_ancestor(target);
 
   if (container_is_floating(target)) {
     if (container_is_scratchpad_hidden(target)) {
@@ -52,18 +61,18 @@ void overview_pull_container(struct sway_container *target,
       container_set_fullscreen(target, FULLSCREEN_NONE);
     }
     struct sway_workspace *old_ws = target->pending.workspace;
-    if (old_ws && old_ws != active_ws) {
+    if (old_ws && old_ws != dest_ws) {
       struct sway_output *old_output = old_ws->output;
       container_detach(target);
-      workspace_add_floating(active_ws, target);
-      if (old_output != active_ws->output) {
+      workspace_add_floating(dest_ws, target);
+      if (old_output != dest_ws->output) {
         struct wlr_box old_box, new_box;
         workspace_get_box(old_ws, &old_box);
-        workspace_get_box(active_ws, &new_box);
+        workspace_get_box(dest_ws, &new_box);
         floating_fix_coordinates(target, &old_box, &new_box);
       }
       arrange_workspace(old_ws);
-      arrange_workspace(active_ws);
+      arrange_workspace(dest_ws);
     }
     // Pull the floating window to the pointer position (centered, clamped).
     struct wlr_cursor *cursor = seat->cursor->cursor;
@@ -89,17 +98,24 @@ void overview_pull_container(struct sway_container *target,
   }
 
   struct sway_container *focus = seat_get_focused_container(seat);
-  if (!focus) {
-    seat_set_focus_container(seat, target);
-    transaction_commit_dirty();
-    return;
-  }
-  struct sway_container *focus_col = container_toplevel_ancestor(focus);
   struct sway_container *target_col = container_toplevel_ancestor(target);
-  if (focus_col != target_col) {
-    int fi = list_find(active_ws->tiling, focus_col);
-    if (fi >= 0) {
-      workspace_pull_column(active_ws, target_col, fi + 1);
+  if (focus) {
+    struct sway_container *focus_col = container_toplevel_ancestor(focus);
+    if (focus_col != target_col) {
+      int fi = list_find(dest_ws->tiling, focus_col);
+      if (fi >= 0) {
+        workspace_pull_column(dest_ws, target_col, fi + 1);
+      } else {
+        // The focused container is not a tiling column of the destination
+        // (e.g. wlroots focus is parked elsewhere while the overview covers
+        // another workspace). Fall back to the focused column index,
+        // otherwise append.
+        int col = dest_ws->focused_column_idx;
+        if (col < 0 || col > dest_ws->tiling->length) {
+          col = dest_ws->tiling->length;
+        }
+        workspace_pull_column(dest_ws, target_col, col);
+      }
     }
   }
   seat_set_focus_container(seat, target);
@@ -109,7 +125,10 @@ void overview_pull_container(struct sway_container *target,
 static void overview_action_pull(struct overview_thumbnail *t) {
   if (!t || !t->con)
     return;
-  overview_pull_container(t->con, overview_state.seat);
+  struct sway_workspace *dest = overview_action_current_ws(overview_state.seat);
+  if (!dest)
+    return;
+  overview_pull_container_to(t->con, overview_state.seat, dest);
 }
 
 // Core swap logic, shared by the overview and the `swap` command. Only swaps
@@ -151,9 +170,14 @@ static void overview_action_swap(struct overview_thumbnail *t) {
 static void overview_action_restore(struct overview_thumbnail *t) {
   if (!t->con)
     return;
-  // Remove from its workspace pool and add to the focused workspace (just
-  // like pull/focus/swap).
-  workspace_minimized_show(t->con);
+  // Restore onto the workspace currently displayed under the overview (like
+  // pull/focus/swap), falling back to the focused workspace.
+  struct sway_workspace *dest = overview_action_current_ws(overview_state.seat);
+  if (dest) {
+    workspace_minimized_show_on(t->con, dest);
+  } else {
+    workspace_minimized_show(t->con);
+  }
   transaction_commit_dirty();
 }
 
