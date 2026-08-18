@@ -31,18 +31,17 @@ static void overview_action_focus(struct overview_thumbnail *t) {
 }
 
 // Core pull logic, shared by the overview and the `pull` command so both
-// stay in sync (pointer-placement for floating, column pull for tiled). The
-// `pull` command targets the focused workspace; the overview click path
-// targets the workspace displayed under the overview (see
-// overview_pull_container_to).
+// stay in sync (pointer-placement for floating, column pull for tiled). Both
+// paths resolve the destination as the workspace displayed under the
+// pointer's monitor (see overview_pull_container_to).
 void overview_pull_container(struct sway_container *target,
         struct sway_seat *seat) {
   if (!target || !seat)
     return;
-  struct sway_workspace *active_ws = seat_get_focused_workspace(seat);
-  if (!active_ws)
+  struct sway_workspace *dest = overview_action_current_ws(seat);
+  if (!dest)
     return;
-  overview_pull_container_to(target, seat, active_ws);
+  overview_pull_container_to(target, seat, dest);
 }
 
 void overview_pull_container_to(struct sway_container *target,
@@ -99,24 +98,30 @@ void overview_pull_container_to(struct sway_container *target,
 
   struct sway_container *focus = seat_get_focused_container(seat);
   struct sway_container *target_col = container_toplevel_ancestor(target);
+
+  // Always move the target into the destination workspace. With pointer-based
+  // output resolution, seat focus can be parked on a different workspace than
+  // the one the overview is shown on (focus-follows-mouse), so never reduce a
+  // pull to a bare focus switch — that only makes sway jump to the target's
+  // workspace instead of bringing it over.
+  int fi = -1;
   if (focus) {
     struct sway_container *focus_col = container_toplevel_ancestor(focus);
     if (focus_col != target_col) {
-      int fi = list_find(dest_ws->tiling, focus_col);
-      if (fi >= 0) {
-        workspace_pull_column(dest_ws, target_col, fi + 1);
-      } else {
-        // The focused container is not a tiling column of the destination
-        // (e.g. wlroots focus is parked elsewhere while the overview covers
-        // another workspace). Fall back to the focused column index,
-        // otherwise append.
-        int col = dest_ws->focused_column_idx;
-        if (col < 0 || col > dest_ws->tiling->length) {
-          col = dest_ws->tiling->length;
-        }
-        workspace_pull_column(dest_ws, target_col, col);
-      }
+      fi = list_find(dest_ws->tiling, focus_col);
     }
+  }
+  if (fi >= 0) {
+    workspace_pull_column(dest_ws, target_col, fi + 1);
+  } else {
+    // Focus is parked elsewhere (or the target is the focused column): drop
+    // the column onto the destination workspace at its focused column index,
+    // otherwise append.
+    int col = dest_ws->focused_column_idx;
+    if (col < 0 || col > dest_ws->tiling->length) {
+      col = dest_ws->tiling->length;
+    }
+    workspace_pull_column(dest_ws, target_col, col);
   }
   seat_set_focus_container(seat, target);
   transaction_commit_dirty();
@@ -125,10 +130,7 @@ void overview_pull_container_to(struct sway_container *target,
 static void overview_action_pull(struct overview_thumbnail *t) {
   if (!t || !t->con)
     return;
-  struct sway_workspace *dest = overview_action_current_ws(overview_state.seat);
-  if (!dest)
-    return;
-  overview_pull_container_to(t->con, overview_state.seat, dest);
+  overview_pull_container(t->con, overview_state.seat);
 }
 
 // Core swap logic, shared by the overview and the `swap` command. Only swaps

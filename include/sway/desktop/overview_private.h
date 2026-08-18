@@ -59,7 +59,7 @@ struct sway_output *overview_pick_output(struct sway_seat *seat);
 struct sway_workspace *overview_action_current_ws(struct sway_seat *seat);
 
 // Pull a container into a specific workspace (used by the overview click
-// path; the `pull` command targets the focused workspace instead).
+// path and the `pull` command).
 void overview_pull_container_to(struct sway_container *target,
         struct sway_seat *seat, struct sway_workspace *dest_ws);
 
