@@ -16,8 +16,6 @@ int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 		int exclude_idx, bool exclude_occupied, int *candidates,
 		int max_cand, double *out_occupied);
 
-bool viewport_column_is_visible(struct sway_workspace *ws, int col_idx);
-
 void viewport_absorb_farthest(struct sway_workspace *ws,
 		int *candidates, int n_candidates, int focus_idx,
 		double *remaining);

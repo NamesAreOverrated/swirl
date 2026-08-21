@@ -1256,6 +1256,13 @@ struct sway_container *workspace_insert_tiling(struct sway_workspace *workspace,
 		con = col;
 	}
 	workspace_insert_tiling_direct(workspace, con, index);
+
+	// Size the newcomer like workspace_add_tiling does: default width with
+	// existing columns absorbing any overflow. Must run AFTER the column is
+	// in ws->tiling (same ordering contract as add_tiling). Without this the
+	// column kept whatever pixels it had before — often zero for freshly
+	// wrapped, moved-in, or float-to-tile swapped containers.
+	workspace_fit_new_column(workspace, con, index);
 	return con;
 }
 
@@ -1719,24 +1726,6 @@ void workspace_fit_new_column(struct sway_workspace *ws,
 	if (focus_idx < 0) focus_idx = 0;
 	if (focus_idx >= ws->tiling->length)
 		focus_idx = ws->tiling->length > 0 ? ws->tiling->length - 1 : 0;
-
-	if (!viewport_column_is_visible(ws, focus_idx)) {
-		int orig = focus_idx;
-		for (int i = focus_idx - 1; i >= 0; --i) {
-			if (viewport_column_is_visible(ws, i)) {
-				focus_idx = i;
-				break;
-			}
-		}
-		if (focus_idx == orig) {
-			for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
-				if (viewport_column_is_visible(ws, i)) {
-					focus_idx = i;
-					break;
-				}
-			}
-		}
-	}
 
 	int exclude_idx = list_find(ws->tiling, col);
 	double occupied;

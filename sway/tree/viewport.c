@@ -18,6 +18,14 @@
 #include "sway/tree/workspace.h"
 #include "sway/tree/column.h"
 
+// Room a column can still grow into before hitting its view's declared
+// maximum width (DBL_MAX when unconstrained).
+static double col_width_headroom(struct sway_container *col, double width) {
+	double cm_w = DBL_MIN, cmax_w = DBL_MAX, cm_h = DBL_MIN, cmax_h = DBL_MAX;
+	container_get_size_constraints(col, &cm_w, &cmax_w, &cm_h, &cmax_h);
+	return cmax_w != DBL_MAX ? fmax(0, cmax_w - width) : DBL_MAX;
+}
+
 void workspace_arrange_columns(struct sway_workspace *ws,
 		struct wlr_box *parent) {
 	if (!ws->tiling || ws->tiling->length == 0) {
@@ -27,19 +35,14 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	int gaps = ws->gaps_inner;
 	double usable_h = parent->height;
 
-	// Fit-to-width: normalize width fractions so columns always fill the
-	// parent width (no overflow past the workspace boundary). Ratios between
-	// columns are preserved.
+	// Pixel-faithful layout: each column's pending.width is the authority
+	// (written by workspace_fit_new_column, viewport_absorb_farthest, the
+	// resize primitives, ...). Fractions are derived state, re-synced below
+	// to match whatever gets rendered, so every width_fraction consumer
+	// (move-between-workspaces, swap, resize deltas, ipc) sees reality and
+	// the next arrange reproduces this layout exactly.
 	int n = ws->tiling->length;
-	double total_frac = 0;
-	for (int i = 0; i < n; ++i) {
-		struct sway_container *col = ws->tiling->items[i];
-		total_frac += col->width_fraction > 0 ? col->width_fraction : 1.0;
-	}
-	if (total_frac <= 0) {
-		total_frac = n;
-	}
-	double child_total_width = fmax(0, parent->width - gaps * (n - 1));
+	double total_w = fmax(0, parent->width - gaps * (n - 1));
 
 	// Containers are placed at their on-screen (output-global) position:
 	// ws->x/y is the tiling origin (already includes outer gaps), so column
@@ -48,41 +51,84 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 	double origin_x = ws->x;
 	double origin_y = ws->y;
 
-	// Reserve each column's requested minimum width first, then distribute
-	// the remaining space in proportion to the columns' width fractions. This
-	// keeps every column at or above its view's minimum while still filling
-	// the workspace exactly, so the post-hoc clamp never has to mutate
-	// width_fraction (which previously caused a ratcheting overflow).
-	double *cmin = malloc(sizeof(double) * n);
-	double reserved = 0;
-	for (int i = 0; i < n; ++i) {
-		struct sway_container *col = ws->tiling->items[i];
-		cmin[i] = container_clamp_tiled_width_min(col);
-		reserved += cmin[i];
+	double *w = malloc(sizeof(double) * n);
+	bool *locked = calloc(n, sizeof(bool));
+	if (!w || !locked) {
+		free(w);
+		free(locked);
+		return;
 	}
-	double remainder = child_total_width - reserved;
 
-	double x = 0;
+	double sum = 0;
 	for (int i = 0; i < n; ++i) {
 		struct sway_container *col = ws->tiling->items[i];
-
-		double frac = col->width_fraction > 0 ? col->width_fraction : 1.0;
-		col->pending.x = origin_x + x;
-		col->pending.y = origin_y;
-		col->pending.height = usable_h;
-		double w = (remainder >= 0)
-				? cmin[i] + remainder * (frac / total_frac)
-				: cmin[i];
-		if (i < n - 1) {
-			col->pending.width = round(w);
-		} else {
-			col->pending.width = fmax(0, parent->width - x);
-		}
 		// Unified clamp: honors the view's min/max (and config min width) so
 		// the resize primitives and the arrange pass enforce identical rules.
-		// width_fraction is left as the user-intent value (not rewritten).
-		col->pending.width = container_clamp_tiled_width(col,
-				col->pending.width, parent->width);
+		w[i] = container_clamp_tiled_width(col, col->pending.width, total_w);
+		sum += w[i];
+	}
+
+	if (sum > total_w && sum > 0) {
+		// Overflow (stale state, e.g. the output shrank): shrink
+		// proportionally, floored at each view's minimum by the clamp. Real
+		// opens never land here: fit_new_column + viewport_absorb_farthest
+		// already make the row fit exactly.
+		double scale = total_w / sum;
+		for (int i = 0; i < n; ++i) {
+			w[i] = container_clamp_tiled_width(ws->tiling->items[i],
+					w[i] * scale, total_w);
+		}
+	} else if (sum < total_w - 0.5) {
+		// Underflow (sparse row, e.g. a fresh workspace): grow to fill
+		// proportionally to the current widths, capped by each view's
+		// declared maximum size.
+		double spare = total_w - sum;
+		while (spare > 0.5) {
+			double base = 0, room = 0;
+			for (int i = 0; i < n; ++i) {
+				if (locked[i]) continue;
+				base += w[i];
+				room += col_width_headroom(ws->tiling->items[i], w[i]);
+			}
+			if (room <= 0.5) break;
+			double taken = 0;
+			for (int i = 0; i < n; ++i) {
+				if (locked[i] || spare - taken <= 0.5) continue;
+				double headroom =
+					col_width_headroom(ws->tiling->items[i], w[i]);
+				if (headroom <= 0.5) {
+					locked[i] = true;
+					continue;
+				}
+				double share = base > 0 ? spare * w[i] / base : spare / n;
+				double grow = fmin(fmin(share, headroom), spare - taken);
+				w[i] += grow;
+				taken += grow;
+			}
+			if (taken <= 0.5) break;
+			spare -= taken;
+		}
+	}
+
+	// Integer-exact placement: cumulative rounding keeps every column at
+	// round() of its ideal geometry so the whole row lands within half a
+	// pixel of the parent edge without a dedicated last-column fill.
+	double pos = 0;
+	long prev_edge = 0;
+	for (int i = 0; i < n; ++i) {
+		struct sway_container *col = ws->tiling->items[i];
+
+		pos += w[i];
+		long edge = lround(pos);
+		col->pending.x = origin_x + prev_edge;
+		col->pending.y = origin_y;
+		col->pending.height = usable_h;
+		col->pending.width = edge - prev_edge;
+
+		// Persist what rendered so the next arrange is a fixed point.
+		col->width_fraction = workspace_width_to_fraction(ws,
+				col->pending.width);
+
 		node_set_dirty(&col->node);
 
 		if (!col->view && col->pending.children) {
@@ -93,9 +139,12 @@ void workspace_arrange_columns(struct sway_workspace *ws,
 			}
 		}
 
-		x += col->pending.width + gaps;
+		prev_edge = edge + gaps;
+		pos += gaps;
 	}
-	free(cmin);
+
+	free(w);
+	free(locked);
 }
 
 void viewport_arrange_windows(struct sway_container *col) {
@@ -222,109 +271,46 @@ void viewport_arrange_windows(struct sway_container *col) {
 }
 
 double workspace_view_remaining_width(struct sway_workspace *ws, int start_index) {
+	// Space at the insertion point after column `start_index`, assuming the
+	// columns to its left keep their widths. Structural on purpose: with
+	// horizontal scrolling gone every tiling column is in the viewport, so
+	// stale pre-arrange geometry must never influence sizing decisions.
 	int gaps = ws->gaps_inner;
-	double vp = ws->viewport_x;
-	double vp_end = vp + ws->width;
 	int start = start_index < 0 ? ws->tiling->length - 1 : start_index;
-	for (int i = start; i >= 0; --i) {
+	double free = ws->width;
+	for (int i = 0; i <= start && i < ws->tiling->length; ++i) {
 		struct sway_container *col = ws->tiling->items[i];
-		double col_x = col_local_x(ws, col);
-		if (col_x + col->pending.width + gaps < vp) {
-			break;
-		}
-		if (col_x > vp_end) {
-			continue;
-		}
-		return vp_end - (col_x + col->pending.width + gaps);
+		free -= col->pending.width + gaps;
 	}
-	return ws->width;
+	return free > 0 ? free : 0;
 }
 
 int viewport_scan_visible(struct sway_workspace *ws, int focus_idx,
 		int exclude_idx, bool exclude_occupied, int *candidates,
 		int max_cand, double *out_occupied) {
-	if (focus_idx < 0 || focus_idx >= ws->tiling->length) {
-		*out_occupied = 0;
-		return 0;
-	}
-
-	if (!viewport_column_is_visible(ws, focus_idx)) {
-		int orig = focus_idx;
-		for (int i = focus_idx - 1; i >= 0; --i) {
-			if (viewport_column_is_visible(ws, i)) {
-				focus_idx = i;
-				break;
-			}
-		}
-		if (focus_idx == orig) {
-			for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
-				if (viewport_column_is_visible(ws, i)) {
-					focus_idx = i;
-					break;
-				}
-			}
-		}
-	}
-
+	// No scrolling means every tiling column is in the viewport; occupancy
+	// is computed structurally from the list instead of from (possibly
+	// stale, pre-arrange) column geometry. Candidate order is irrelevant:
+	// viewport_absorb_farthest re-sorts by distance from focus on each pick.
 	double sum = 0;
+	int count = 0;
+	for (int i = 0; i < ws->tiling->length; ++i) {
+		if (exclude_occupied && i == exclude_idx) {
+			continue;
+		}
+		struct sway_container *col = ws->tiling->items[i];
+		sum += col->pending.width;
+		count++;
+	}
+
 	int n = 0;
-	int total_vis = 1;
-
-	struct sway_container *fc = ws->tiling->items[focus_idx];
-	if (exclude_occupied && focus_idx == exclude_idx) {
-		total_vis--;
-	} else {
-		sum += fc->pending.width;
-	}
-
-	for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
-		if (!viewport_column_is_visible(ws, i)) {
-			break;
-		}
-		struct sway_container *c = ws->tiling->items[i];
-		if (exclude_occupied && i == exclude_idx) {
-			total_vis--;
-		} else {
-			total_vis++;
-			sum += c->pending.width;
-		}
-		if (i != exclude_idx && n < max_cand)
+	for (int i = 0; i < ws->tiling->length && n < max_cand; ++i) {
+		if (i != exclude_idx)
 			candidates[n++] = i;
 	}
 
-	for (int i = focus_idx - 1; i >= 0; --i) {
-		if (!viewport_column_is_visible(ws, i)) {
-			break;
-		}
-		struct sway_container *c = ws->tiling->items[i];
-		if (exclude_occupied && i == exclude_idx) {
-			total_vis--;
-		} else {
-			total_vis++;
-			sum += c->pending.width;
-		}
-		if (i != exclude_idx && n < max_cand)
-			candidates[n++] = i;
-	}
-
-	if (exclude_idx != focus_idx && n < max_cand) {
-		candidates[n++] = focus_idx;
-	}
-
-	*out_occupied = sum + ws->gaps_inner * (total_vis - 1);
+	*out_occupied = count > 1 ? sum + ws->gaps_inner * (count - 1) : sum;
 	return n;
-}
-
-bool viewport_column_is_visible(struct sway_workspace *ws, int col_idx) {
-	if (col_idx < 0 || col_idx >= ws->tiling->length) {
-		return false;
-	}
-	struct sway_container *c = ws->tiling->items[col_idx];
-	double col_x = col_local_x(ws, c);
-	double vp = ws->viewport_x;
-	double vp_end = vp + ws->width;
-	return col_x >= vp - 0.5
-		&& col_x + c->pending.width <= vp_end + 0.5;
 }
 
 void viewport_absorb_farthest(struct sway_workspace *ws,
@@ -356,15 +342,13 @@ void viewport_absorb_farthest(struct sway_workspace *ws,
 }
 
 void viewport_visible_range(struct sway_workspace *ws, int *start, int *end) {
-	*start = -1;
-	*end = -1;
-	for (int i = 0; i < ws->tiling->length; ++i) {
-		if (viewport_column_is_visible(ws, i)) {
-			if (*start < 0) *start = i;
-			*end = i;
-		} else if (*start >= 0) {
-			break;
-		}
+	// No scrolling: the whole tiling list is always visible.
+	if (ws->tiling->length > 0) {
+		*start = 0;
+		*end = ws->tiling->length - 1;
+	} else {
+		*start = -1;
+		*end = -1;
 	}
 }
 
@@ -379,8 +363,6 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
   double remaining = freed_width;
   double default_w = workspace_width_fraction(ws,
       config->default_column_width_fraction);
-  double min_w = workspace_width_fraction(ws,
-      config->min_column_width_fraction);
 
   int vs, ve;
   viewport_visible_range(ws, &vs, &ve);
@@ -399,12 +381,9 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 		}
 	}
 
-	// 2. Grow visible right neighbors (up to default_w each)
+	// 2. Grow remaining columns (up to default_w each)
 	{
 		for (int i = col_idx; i < ws->tiling->length && remaining > 1; ++i) {
-			if (!viewport_column_is_visible(ws, i)) {
-				break;
-			}
 			struct sway_container *c = ws->tiling->items[i];
 			double orig = c->pending.width;
 			double room = fmax(0, default_w - orig);
@@ -418,46 +397,23 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 		}
 	}
 
-	// 3. Handle slider (first off-screen column at or after col_idx)
-	bool slider_resized = false;
-	if (remaining > 1) {
-		int slider_idx = -1;
-		for (int i = col_idx; i < ws->tiling->length; ++i) {
-			if (!viewport_column_is_visible(ws, i)) {
-				slider_idx = i;
-				break;
+	// 3. Give anything left over to the smallest column.
+	if (remaining > 1 && vs >= 0) {
+		struct sway_container **items = (struct sway_container **)ws->tiling->items;
+		double min_vw = items[vs]->pending.width;
+		int smallest = vs;
+		for (int i = vs; i <= ve; ++i) {
+			double w = items[i]->pending.width;
+			if (w < min_vw) {
+				min_vw = w;
+				smallest = i;
 			}
 		}
-
-		if (slider_idx >= 0 && remaining >= min_w) {
-			double new_w = remaining - ws->gaps_inner;
-			if (new_w < min_w) new_w = min_w;
-			struct sway_container *slider = ws->tiling->items[slider_idx];
-			slider->pending.width = new_w;
-			slider->width_fraction = workspace_width_to_fraction(ws, new_w);
-			node_set_dirty(&slider->node);
-			remaining = 0;
-			slider_resized = true;
-		}
-		if (remaining > 1) {
-			if (vs >= 0) {
-				struct sway_container **items = (struct sway_container **)ws->tiling->items;
-				double min_vw = items[vs]->pending.width;
-				int smallest = vs;
-				for (int i = vs; i <= ve; ++i) {
-					double w = items[i]->pending.width;
-					if (w < min_vw) {
-						min_vw = w;
-						smallest = i;
-					}
-				}
-				items[smallest]->pending.width += remaining;
-				items[smallest]->width_fraction =
-					workspace_width_to_fraction(ws, items[smallest]->pending.width);
-				node_set_dirty(&items[smallest]->node);
-				remaining = 0;
-			}
-		}
+		items[smallest]->pending.width += remaining;
+		items[smallest]->width_fraction =
+			workspace_width_to_fraction(ws, items[smallest]->pending.width);
+		node_set_dirty(&items[smallest]->node);
+		remaining = 0;
 	}
 
 	if (remaining > 0 && remaining < 0.5) {
@@ -465,8 +421,7 @@ int viewport_grow_to_fill(struct sway_workspace *ws, int col_idx,
 	}
 
 	int ret;
-	if (col_idx < ws->tiling->length && slider_resized) ret = col_idx;
-	else if (col_idx - 1 >= 0) ret = col_idx - 1;
+	if (col_idx - 1 >= 0) ret = col_idx - 1;
 	else ret = -1;
 	return ret;
 }

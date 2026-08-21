@@ -101,27 +101,7 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		col_idx, ws->focused_column_idx, focus_idx, ws->tiling->length,
 		ws->viewport_x, ws->viewport_x + ws->width);
 
-	if (!viewport_column_is_visible(ws, focus_idx)) {
-		int orig = focus_idx;
-		for (int i = focus_idx - 1; i >= 0; --i) {
-			if (viewport_column_is_visible(ws, i)) {
-				focus_idx = i;
-				break;
-			}
-		}
-		if (focus_idx == orig) {
-			for (int i = focus_idx + 1; i < ws->tiling->length; ++i) {
-				if (viewport_column_is_visible(ws, i)) {
-					focus_idx = i;
-					break;
-				}
-			}
-		}
-		sway_log(SWAY_DEBUG, "[resize] focus_idx %d off-screen, "
-			"adjusted to %d", orig, focus_idx);
-	}
-
-	// Pre-change: scan visible columns and compute occupied width
+	// Pre-change: scan columns and compute occupied width
 	int candidates[32];
 	double occupied;
 	int n_candidates = viewport_scan_visible(ws, focus_idx, col_idx,

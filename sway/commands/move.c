@@ -129,12 +129,14 @@ static void container_move_to_container_from_direction(
 			int index = container_sibling_index(destination) + offset;
 			if (destination->pending.parent) {
 				container_insert_child(destination->pending.parent, container, index);
+				container->pending.width = container->pending.height = 0;
+				container->width_fraction = container->height_fraction = 0;
 			} else {
+				// Top-level insert: workspace_insert_tiling fits the column
+				// itself; zeroing here would clobber that width.
 				workspace_insert_tiling(destination->pending.workspace,
 						container, index);
 			}
-			container->pending.width = container->pending.height = 0;
-			container->width_fraction = container->height_fraction = 0;
 			workspace_squash(destination->pending.workspace);
 		}
 		return;
