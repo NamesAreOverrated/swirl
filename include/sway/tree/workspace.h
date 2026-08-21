@@ -22,7 +22,6 @@ struct sway_workspace_state {
 
 	struct sway_container *focused_inactive_child;
 	bool focused;
-	double viewport_x, viewport_y;
 };
 
 struct sway_workspace {
@@ -55,7 +54,6 @@ struct sway_workspace {
 	list_t *output_priority;
 	bool urgent;
 
-	double viewport_x, viewport_y;
 	int focused_column_idx;
 
 	// When true, new windows on this workspace float by default instead of

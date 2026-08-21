@@ -7,9 +7,6 @@
 
 void column_set_width_px(struct sway_container *col, double width_px);
 
-double col_local_x(struct sway_workspace *ws,
-		const struct sway_container *col);
-
 int column_remove(struct sway_container *col, bool grow_neighbors);
 
 static inline void column_set_width_fraction(struct sway_container *col,

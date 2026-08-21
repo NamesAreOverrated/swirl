@@ -74,9 +74,9 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 		return;
 	}
 
-	sway_log(SWAY_DEBUG, "[resize] con=%p col=%p col_idx=%d col_x=%.0f col_w=%.0f ws_width=%d vp_x=%.0f",
+	sway_log(SWAY_DEBUG, "[resize] con=%p col=%p col_idx=%d col_x=%.0f col_w=%.0f ws_width=%d",
 		con, col, container_sibling_index(col),
-		col->pending.x, col->pending.width, ws->width, ws->viewport_x);
+		col->pending.x, col->pending.width, ws->width);
 
 	double new_w = container_clamp_tiled_width(col,
 			col->pending.width + delta_px, ws->width);
@@ -97,9 +97,8 @@ void tiled_resize_horizontal_px(struct sway_container *con,
 	}
 	int focus_idx = ws->focused_column_idx >= 0 ? ws->focused_column_idx : col_idx;
 	sway_log(SWAY_DEBUG, "[resize] col_idx=%d raw_focused_column_idx=%d "
-		"focus_idx=%d n_cols=%d vp=[%.0f, %.0f]",
-		col_idx, ws->focused_column_idx, focus_idx, ws->tiling->length,
-		ws->viewport_x, ws->viewport_x + ws->width);
+		"focus_idx=%d n_cols=%d",
+		col_idx, ws->focused_column_idx, focus_idx, ws->tiling->length);
 
 	// Pre-change: scan columns and compute occupied width
 	int candidates[32];

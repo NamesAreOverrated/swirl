@@ -139,9 +139,6 @@ copy_workspace_state(struct sway_workspace *ws,
     }
   }
   state->focused_inactive_child = focus;
-
-  state->viewport_x = ws->viewport_x;
-  state->viewport_y = ws->viewport_y;
 }
 
 static void
