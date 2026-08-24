@@ -305,6 +305,7 @@ static void config_defaults(struct sway_config *config) {
 	config->border_thickness = 2;
 	config->floating_border_thickness = 2;
 	config->corner_radius = 0;
+	config->floating_snap_threshold = 10;
 	config->shadow_enabled = false;
 	config->shadow_blur_radius = 6;
 	config->shadow_opacity = 0.5f;

@@ -64,6 +64,7 @@ static const struct cmd_handler handlers[] = {
 	{ "floating_maximum_size", cmd_floating_maximum_size },
 	{ "floating_minimum_size", cmd_floating_minimum_size },
 	{ "floating_modifier", cmd_floating_modifier },
+	{ "floating_snap", cmd_floating_snap },
 	{ "focus", cmd_focus },
 	{ "focus_follows_mouse", cmd_focus_follows_mouse },
 	{ "focus_on_window_activation", cmd_focus_on_window_activation },

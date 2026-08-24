@@ -78,33 +78,49 @@ static bool edge_is_external(struct sway_container *cont, enum wlr_edges edge) {
 	return true;
 }
 
+// Invisible resize-grip margin for floating windows: corners and edges get
+// a generous grab zone regardless of the visible border thickness.
+#define FLOATING_RESIZE_GRAB 8
+
 static enum wlr_edges find_edge(struct sway_container *cont,
 		struct wlr_surface *surface, struct sway_cursor *cursor) {
 	if (!cont->view || (surface && cont->view->surface != surface)) {
-		return WLR_EDGE_NONE;
-	}
-	if (cont->pending.border == B_NONE || !cont->pending.border_thickness ||
-			cont->pending.border == B_CSD) {
 		return WLR_EDGE_NONE;
 	}
 	if (cont->pending.fullscreen_mode) {
 		return WLR_EDGE_NONE;
 	}
 
+	bool floating = container_is_floating(cont);
+	if (!floating && (cont->pending.border == B_NONE ||
+			!cont->pending.border_thickness ||
+			cont->pending.border == B_CSD)) {
+		return WLR_EDGE_NONE;
+	}
+	// Client-decorated windows own their whole surface; no server grip.
+	if (cont->pending.border == B_CSD) {
+		return WLR_EDGE_NONE;
+	}
+
+	int thickness = cont->pending.border_thickness;
+	if (floating && thickness < FLOATING_RESIZE_GRAB) {
+		thickness = FLOATING_RESIZE_GRAB;
+	}
+
 	struct wlr_box screen_box;
 	container_get_screen_box(cont, &screen_box);
 
 	enum wlr_edges edge = 0;
-	if (cursor->cursor->x < screen_box.x + cont->pending.border_thickness) {
+	if (cursor->cursor->x < screen_box.x + thickness) {
 		edge |= WLR_EDGE_LEFT;
 	}
-	if (cursor->cursor->y < screen_box.y + cont->pending.border_thickness) {
+	if (cursor->cursor->y < screen_box.y + thickness) {
 		edge |= WLR_EDGE_TOP;
 	}
-	if (cursor->cursor->x >= screen_box.x + screen_box.width - cont->pending.border_thickness) {
+	if (cursor->cursor->x >= screen_box.x + screen_box.width - thickness) {
 		edge |= WLR_EDGE_RIGHT;
 	}
-	if (cursor->cursor->y >= screen_box.y + screen_box.height - cont->pending.border_thickness) {
+	if (cursor->cursor->y >= screen_box.y + screen_box.height - thickness) {
 		edge |= WLR_EDGE_BOTTOM;
 	}
 

@@ -1,8 +1,12 @@
-#include <limits.h>
+#include <math.h>
+#include <stdlib.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include "config.h"
+#include "log.h"
 #include "sway/desktop/transaction.h"
 #include "sway/input/cursor.h"
+#include "floating_snap.h"
 #include "sway/input/seat.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/view.h"
@@ -16,7 +20,137 @@ struct seatop_resize_floating_event {
 	double ref_lx, ref_ly;         // cursor's x/y at start of op
 	double ref_width, ref_height;  // container's size at start of op
 	double ref_con_lx, ref_con_ly; // container's x/y at start of op
+	struct wlr_scene_rect *indicator_rect;
 };
+
+// One snap candidate: an edge coordinate plus the rect to highlight when
+// this candidate wins (the source window's matching edge strip).
+#define FLOATING_SNAP_MAX_CANDS 64
+
+static void indicator_destroy(struct seatop_resize_floating_event *e) {
+	if (e->indicator_rect) {
+		wlr_scene_node_destroy(&e->indicator_rect->node);
+		e->indicator_rect = NULL;
+	}
+}
+
+static void indicator_show(struct seatop_resize_floating_event *e,
+		const struct wlr_box *hl) {
+	wlr_scene_node_set_enabled(&e->indicator_rect->node, true);
+	wlr_scene_node_set_position(&e->indicator_rect->node, hl->x, hl->y);
+	wlr_scene_rect_set_size(e->indicator_rect, hl->width, hl->height);
+}
+
+// Snap the moving edge(s) of the resize against nearby workspace/floater
+// edges by adjusting the resulting width/height. Only the edges actually
+// being dragged participate.
+static void snap_floating_resize(struct seatop_resize_floating_event *e,
+		struct sway_container *con, double *width, double *height) {
+	int threshold = config->floating_snap_threshold;
+	struct sway_workspace *ws = con->pending.workspace;
+	sway_log(SWAY_DEBUG, "[FSNAP] resize con=%p id=%zu edge=%d "
+		"ref_con=(%.0f,%.0f) ref_size=(%.0f,%.0f) pre=(%.0f,%.0f) thr=%d",
+		(void *)con, con->node.id, e->edge,
+		e->ref_con_lx, e->ref_con_ly,
+		e->ref_width, e->ref_height, *width, *height, threshold);
+	if (threshold <= 0 || !ws) {
+		return;
+	}
+
+	bool horiz = e->edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
+	bool vert = e->edge & (WLR_EDGE_TOP | WLR_EDGE_BOTTOM);
+
+	const struct wlr_box *hl = NULL;
+
+	if (horiz) {
+		struct floating_snap_cand cands[FLOATING_SNAP_MAX_CANDS];
+		int n = 0;
+		floating_snap_collect(con, ws, true, cands, &n);
+		// Absolute coordinate of the moving vertical edge.
+		bool moving_hi = e->edge & WLR_EDGE_RIGHT;
+		double moving = moving_hi
+			? e->ref_con_lx + *width
+			: e->ref_con_lx + e->ref_width - *width;
+		sway_log(SWAY_DEBUG, "[FSNAP] resize-x moving=%.0f (hi=%d) "
+			"perp=[%.0f..%.0f] n=%d",
+			moving, moving_hi, con->pending.y,
+			con->pending.y + con->pending.height, n);
+		for (int i = 0; i < n; i++) {
+			if (cands[i].for_hi != moving_hi) {
+				continue;
+			}
+			double d = cands[i].edge - moving;
+			bool perp_ok = cands[i].p_lo <
+					con->pending.y + con->pending.height + threshold &&
+				cands[i].p_hi > con->pending.y - threshold;
+			if (!perp_ok) {
+				continue;
+			}
+			sway_log(SWAY_DEBUG, "[FSNAP]   test x edge=%.0f d=%.0f %s",
+				cands[i].edge, d,
+				fabs(d) <= threshold ? "IN-THRESHOLD" : "skip");
+			if (fabs(d) <= threshold) {
+				sway_log(SWAY_DEBUG, "[FSNAP] resize-x SNAP d=%.0f "
+					"width %.0f -> %.0f", d, *width,
+					moving_hi ? *width + d : *width - d);
+				if (moving_hi) {
+					*width += d;
+				} else {
+					*width -= d;
+				}
+				hl = &cands[i].hl;
+				break;
+			}
+		}
+	}
+
+	if (vert) {
+		struct floating_snap_cand cands[FLOATING_SNAP_MAX_CANDS];
+		int n = 0;
+		floating_snap_collect(con, ws, false, cands, &n);
+		bool moving_hi = e->edge & WLR_EDGE_BOTTOM;
+		double moving = moving_hi
+			? e->ref_con_ly + *height
+			: e->ref_con_ly + e->ref_height - *height;
+		sway_log(SWAY_DEBUG, "[FSNAP] resize-y moving=%.0f (hi=%d) "
+			"perp=[%.0f..%.0f] n=%d",
+			moving, moving_hi, con->pending.x,
+			con->pending.x + con->pending.width, n);
+		for (int i = 0; i < n; i++) {
+			if (cands[i].for_hi != moving_hi) {
+				continue;
+			}
+			double d = cands[i].edge - moving;
+			bool perp_ok = cands[i].p_lo <
+					con->pending.x + con->pending.width + threshold &&
+				cands[i].p_hi > con->pending.x - threshold;
+			if (!perp_ok) {
+				continue;
+			}
+			sway_log(SWAY_DEBUG, "[FSNAP]   test y edge=%.0f d=%.0f %s",
+				cands[i].edge, d,
+				fabs(d) <= threshold ? "IN-THRESHOLD" : "skip");
+			if (fabs(d) <= threshold) {
+				sway_log(SWAY_DEBUG, "[FSNAP] resize-y SNAP d=%.0f "
+					"height %.0f -> %.0f", d, *height,
+					moving_hi ? *height + d : *height - d);
+				if (moving_hi) {
+					*height += d;
+				} else {
+					*height -= d;
+				}
+				hl = &cands[i].hl;
+				break;
+			}
+		}
+	}
+
+	if (hl) {
+		indicator_show(e, hl);
+	} else {
+		wlr_scene_node_set_enabled(&e->indicator_rect->node, false);
+	}
+}
 
 static void handle_button(struct sway_seat *seat, uint32_t time_msec,
 		struct wlr_input_device *device, uint32_t button,
@@ -105,6 +239,10 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 		height = fmax(height, 1);
 	}
 
+	// Snap the dragged edge(s) against nearby workspace/floater edges before
+	// deriving the growth vectors so position follows the adjusted size.
+	snap_floating_resize(e, con, &width, &height);
+
 	// Recalculate these, in case we hit a min/max limit
 	grow_width = width - e->ref_width;
 	grow_height = height - e->ref_height;
@@ -152,14 +290,23 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 static void handle_unref(struct sway_seat *seat, struct sway_container *con) {
 	struct seatop_resize_floating_event *e = seat->seatop_data;
 	if (e->con == con) {
+		indicator_destroy(e);
 		seatop_begin_default(seat);
 	}
+}
+
+static void handle_end(struct sway_seat *seat) {
+	struct seatop_resize_floating_event *e = seat->seatop_data;
+	// seatop_end() frees seatop_data after this returns; only tear down
+	// the indicator here.
+	indicator_destroy(e);
 }
 
 static const struct sway_seatop_impl seatop_impl = {
 	.button = handle_button,
 	.pointer_motion = handle_pointer_motion,
 	.unref = handle_unref,
+	.end = handle_end,
 };
 
 void seatop_begin_resize_floating(struct sway_seat *seat,
@@ -172,6 +319,20 @@ void seatop_begin_resize_floating(struct sway_seat *seat,
 		return;
 	}
 	e->con = con;
+
+	const float *indicator = config->border_colors.focused.indicator;
+	float color[4] = {
+		indicator[0] * .5,
+		indicator[1] * .5,
+		indicator[2] * .5,
+		indicator[3] * .5,
+	};
+	e->indicator_rect = wlr_scene_rect_create(seat->scene_tree, 0, 0, color);
+	if (!e->indicator_rect) {
+		free(e);
+		return;
+	}
+	wlr_scene_node_set_enabled(&e->indicator_rect->node, false);
 
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat->wlr_seat);
 	e->preserve_ratio = keyboard &&

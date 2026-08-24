@@ -568,6 +568,7 @@ struct sway_config {
 	int border_thickness;
 	int floating_border_thickness;
 	int corner_radius;
+	int floating_snap_threshold;
 	bool shadow_enabled;
 	int shadow_blur_radius;
 	float shadow_opacity;
