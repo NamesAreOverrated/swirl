@@ -87,11 +87,11 @@ static void finalize_move(struct sway_seat *seat) {
 	struct seatop_move_floating_event *e = seat->seatop_data;
 	struct sway_container *con = e->con;
 	sway_log(SWAY_DEBUG, "[FSNAP] finalize zone=%d zone_rect={%d,%d,%d,%d} "
-		"pending={%.0f,%.0f,%.0f,%.0f}",
+		"pending={%d,%d,%d,%d}",
 		e->zone_active, e->zone.x, e->zone.y,
 		e->zone.width, e->zone.height,
-		con->pending.x, con->pending.y,
-		con->pending.width, con->pending.height);
+		(int)con->pending.x, (int)con->pending.y,
+		(int)con->pending.width, (int)con->pending.height);
 
 	if (e->zone_active) {
 		// Aero-snap commit: take over the previewed zone.
@@ -191,29 +191,33 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 		int zx = ws_box.x, zy = ws_box.y;
 		int zw = ws_box.width, zh = ws_box.height;
 		int hw = zw / 2, hh = zh / 2;
+		int g = ws->gaps_inner;
 		bool left = cursor->x <= zx + ZONE_STRIP;
 		bool right = cursor->x >= zx + zw - ZONE_STRIP;
 		bool top = cursor->y <= zy + ZONE_STRIP;
 		bool bottom = cursor->y >= zy + zh - ZONE_STRIP;
 
 		if (left && top) {
-			e->zone = (struct wlr_box){ zx, zy, hw, hh };
+			e->zone = (struct wlr_box){ zx, zy, hw - g / 2, hh - g / 2 };
 			e->zone_active = true;
 		} else if (right && top) {
-			e->zone = (struct wlr_box){ zx + zw - hw, zy, zw - hw, hh };
+			e->zone = (struct wlr_box){ zx + hw + g / 2, zy,
+				zw - hw - g / 2, hh - g / 2 };
 			e->zone_active = true;
 		} else if (left && bottom) {
-			e->zone = (struct wlr_box){ zx, zy + zh - hh, hw, zh - hh };
+			e->zone = (struct wlr_box){ zx, zy + hh + g / 2,
+				hw - g / 2, zh - hh - g / 2 };
 			e->zone_active = true;
 		} else if (right && bottom) {
-			e->zone = (struct wlr_box){
-				zx + zw - hw, zy + zh - hh, zw - hw, zh - hh };
+			e->zone = (struct wlr_box){ zx + hw + g / 2, zy + hh + g / 2,
+				zw - hw - g / 2, zh - hh - g / 2 };
 			e->zone_active = true;
 		} else if (left) {
-			e->zone = (struct wlr_box){ zx, zy, hw, zh };
+			e->zone = (struct wlr_box){ zx, zy, hw - g / 2, zh };
 			e->zone_active = true;
 		} else if (right) {
-			e->zone = (struct wlr_box){ zx + zw - hw, zy, zw - hw, zh };
+			e->zone = (struct wlr_box){ zx + hw + g / 2, zy,
+				zw - hw - g / 2, zh };
 			e->zone_active = true;
 		} else if (top) {
 			e->zone = (struct wlr_box){ zx, zy, zw, zh }; // maximize-equivalent
