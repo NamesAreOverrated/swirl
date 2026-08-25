@@ -20,6 +20,7 @@
 #include "util.h"
 #include "sway/commands.h"
 #include "sway/input/cursor.h"
+#include "sway/input/edge_bindings.h"
 #include "sway/input/keyboard.h"
 #include "sway/input/tablet.h"
 #include "sway/layers.h"
@@ -317,6 +318,8 @@ void pointer_motion(struct sway_cursor *cursor, uint32_t time_msec,
 	}
 
 	wlr_cursor_move(cursor->cursor, device, dx, dy);
+
+	edge_bindings_check(cursor->cursor->x, cursor->cursor->y);
 
 	seatop_pointer_motion(cursor->seat, time_msec);
 }

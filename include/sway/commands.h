@@ -129,6 +129,8 @@ sway_cmd cmd_commands;
 sway_cmd cmd_column_width;
 sway_cmd cmd_corner_radius;
 sway_cmd cmd_floating_snap;
+sway_cmd cmd_exec_range;
+sway_cmd cmd_exec_range_exit;
 sway_cmd cmd_create_output;
 sway_cmd cmd_default_border;
 sway_cmd cmd_default_floating_border;

@@ -490,6 +490,17 @@ enum xwayland_mode {
 /**
  * The configuration struct. The result of loading a config file.
  */
+struct edge_binding_config {
+	uint32_t edges;          // WLR_EDGE bitmask
+	int range;               // px from output edge inward
+	char *command;
+	bool fire_on_exit;
+	bool is_global;
+	char *workspace_name;    // NULL for global
+	int motion_gate;         // 0=always, 1=only while button held, -1=only idle
+	bool was_inside;         // runtime transition state
+};
+
 struct sway_config {
 	char *swaynag_command;
 	struct swaynag_instance swaynag_config_errors;
@@ -505,6 +516,7 @@ struct sway_config {
 	list_t *criteria;
 	list_t *no_focus;
 	list_t *active_bar_modifiers;
+	list_t *edge_bindings;
 	struct sway_mode *current_mode;
 	struct bar_config *current_bar;
 	uint32_t floating_mod;

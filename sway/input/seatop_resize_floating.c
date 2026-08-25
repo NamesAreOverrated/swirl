@@ -71,21 +71,13 @@ static void snap_floating_resize(struct seatop_resize_floating_event *e,
 		double moving = moving_hi
 			? e->ref_con_lx + *width
 			: e->ref_con_lx + e->ref_width - *width;
-		sway_log(SWAY_DEBUG, "[FSNAP] resize-x moving=%.0f (hi=%d) "
-			"perp=[%.0f..%.0f] n=%d",
-			moving, moving_hi, con->pending.y,
-			con->pending.y + con->pending.height, n);
+		sway_log(SWAY_DEBUG, "[FSNAP] resize-x moving=%.0f (hi=%d) n=%d",
+			moving, moving_hi, n);
 		for (int i = 0; i < n; i++) {
-			if (cands[i].for_hi != moving_hi) {
+			if (cands[i].role != (moving_hi ? FLOATING_SNAP_HI : FLOATING_SNAP_LO)) {
 				continue;
 			}
 			double d = cands[i].edge - moving;
-			bool perp_ok = cands[i].p_lo <
-					con->pending.y + con->pending.height + threshold &&
-				cands[i].p_hi > con->pending.y - threshold;
-			if (!perp_ok) {
-				continue;
-			}
 			sway_log(SWAY_DEBUG, "[FSNAP]   test x edge=%.0f d=%.0f %s",
 				cands[i].edge, d,
 				fabs(d) <= threshold ? "IN-THRESHOLD" : "skip");
@@ -112,21 +104,13 @@ static void snap_floating_resize(struct seatop_resize_floating_event *e,
 		double moving = moving_hi
 			? e->ref_con_ly + *height
 			: e->ref_con_ly + e->ref_height - *height;
-		sway_log(SWAY_DEBUG, "[FSNAP] resize-y moving=%.0f (hi=%d) "
-			"perp=[%.0f..%.0f] n=%d",
-			moving, moving_hi, con->pending.x,
-			con->pending.x + con->pending.width, n);
+		sway_log(SWAY_DEBUG, "[FSNAP] resize-y moving=%.0f (hi=%d) n=%d",
+			moving, moving_hi, n);
 		for (int i = 0; i < n; i++) {
-			if (cands[i].for_hi != moving_hi) {
+			if (cands[i].role != (moving_hi ? FLOATING_SNAP_HI : FLOATING_SNAP_LO)) {
 				continue;
 			}
 			double d = cands[i].edge - moving;
-			bool perp_ok = cands[i].p_lo <
-					con->pending.x + con->pending.width + threshold &&
-				cands[i].p_hi > con->pending.x - threshold;
-			if (!perp_ok) {
-				continue;
-			}
 			sway_log(SWAY_DEBUG, "[FSNAP]   test y edge=%.0f d=%.0f %s",
 				cands[i].edge, d,
 				fabs(d) <= threshold ? "IN-THRESHOLD" : "skip");

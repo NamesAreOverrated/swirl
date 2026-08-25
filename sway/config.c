@@ -17,6 +17,7 @@
 #include <linux/input-event-codes.h>
 #include <wlr/types/wlr_output.h>
 #include "sway/input/input-manager.h"
+#include "sway/input/edge_bindings.h"
 #include "sway/input/seat.h"
 #include "sway/input/switch.h"
 #include "sway/commands.h"
@@ -168,6 +169,17 @@ void free_config(struct sway_config *config) {
 	}
 	list_free(config->no_focus);
 	list_free(config->active_bar_modifiers);
+	if (config->edge_bindings) {
+		for (int i = 0; i < config->edge_bindings->length; ++i) {
+			struct edge_binding_config *eb =
+				config->edge_bindings->items[i];
+			free(eb->command);
+			free(eb->workspace_name);
+			free(eb);
+		}
+		list_free(config->edge_bindings);
+	}
+	edge_bindings_reset();
 	list_free_items_and_destroy(config->config_chain);
 	free(config->floating_scroll_up_cmd);
 	free(config->floating_scroll_down_cmd);
@@ -304,6 +316,7 @@ static void config_defaults(struct sway_config *config) {
 	config->floating_border = B_NORMAL;
 	config->border_thickness = 2;
 	config->floating_border_thickness = 2;
+	config->edge_bindings = create_list();
 	config->corner_radius = 0;
 	config->floating_snap_threshold = 10;
 	config->shadow_enabled = false;

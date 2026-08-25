@@ -4,16 +4,12 @@
 #include "sway/tree/container.h"
 #include "sway/tree/workspace.h"
 
-
 static void add_cand(struct floating_snap_cand *cands, int *n, double edge,
-		const struct wlr_box *hl, bool for_hi,
-		double p_lo, double p_hi) {
+		const struct wlr_box *hl, enum floating_snap_role role) {
 	if (*n < FLOATING_SNAP_MAX_CANDS) {
 		cands[*n].edge = edge;
 		cands[*n].hl = *hl;
-		cands[*n].for_hi = for_hi;
-		cands[*n].p_lo = p_lo;
-		cands[*n].p_hi = p_hi;
+		cands[*n].role = role;
 		(*n)++;
 	}
 }
@@ -27,11 +23,6 @@ void floating_snap_collect(struct sway_container *skip,
 		if (f == skip || f->minimized) {
 			continue;
 		}
-		if (container_is_scratchpad_hidden(f)) {
-			sway_log(SWAY_DEBUG, "[FSNAP] cand SKIP hidden-scratchpad "
-				"con=%p id=%zu", (void *)f, f->node.id);
-			continue;
-		}
 		struct wlr_box fb = {
 			f->pending.x, f->pending.y,
 			f->pending.width, f->pending.height,
@@ -40,51 +31,104 @@ void floating_snap_collect(struct sway_container *skip,
 			"box={%d,%d,%d,%d}", (void *)f, f->node.id,
 			fb.x, fb.y, fb.width, fb.height);
 		if (horizontal) {
-			double p_lo = fb.y, p_hi = fb.y + fb.height;
 			struct wlr_box hl = { fb.x, fb.y,
 				FLOATING_SNAP_EDGE_STRIP, fb.height };
-			add_cand(cands, n, (double)fb.x - gap, &hl, true, p_lo, p_hi);
-			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=x id=%zu edge=%.0f "
-				"for_hi hl={%d,%d,%d,%d}", f->node.id,
-				(double)fb.x - gap,
+			add_cand(cands, n, (double)fb.x - gap, &hl,
+				FLOATING_SNAP_HI);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=x id=%zu "
+				"edge=%.0f LO-stack hl={%d,%d,%d,%d}",
+				f->node.id, (double)fb.x - gap,
 				hl.x, hl.y, hl.width, hl.height);
-			hl.x = fb.x + fb.width - FLOATING_SNAP_EDGE_STRIP;
-			add_cand(cands, n, (double)(fb.x + fb.width) + gap, &hl,
-				false, p_lo, p_hi);
-			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=x id=%zu edge=%.0f "
-				"for_lo hl={%d,%d,%d,%d}", f->node.id,
-				(double)(fb.x + fb.width) + gap,
+
+			struct wlr_box hl2 = { fb.x + fb.width
+				- FLOATING_SNAP_EDGE_STRIP, fb.y,
+				FLOATING_SNAP_EDGE_STRIP, fb.height };
+			add_cand(cands, n, (double)(fb.x + fb.width) + gap, &hl2,
+				FLOATING_SNAP_LO);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=x id=%zu "
+				"edge=%.0f HI-stack hl={%d,%d,%d,%d}",
+				f->node.id, (double)(fb.x + fb.width) + gap,
+				hl2.x, hl2.y, hl2.width, hl2.height);
+
+			add_cand(cands, n, (double)fb.x, &hl,
+				FLOATING_SNAP_LO);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=x id=%zu "
+				"edge=%.0f align-L hl={%d,%d,%d,%d}",
+				f->node.id, (double)fb.x,
 				hl.x, hl.y, hl.width, hl.height);
+
+			add_cand(cands, n, (double)(fb.x + fb.width), &hl2,
+				FLOATING_SNAP_HI);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=x id=%zu "
+				"edge=%.0f align-R hl={%d,%d,%d,%d}",
+				f->node.id, (double)(fb.x + fb.width),
+				hl2.x, hl2.y, hl2.width, hl2.height);
+
+			double fcenter = fb.x + fb.width / 2.0;
+			struct wlr_box chl = { (int)(fcenter - FLOATING_SNAP_EDGE_STRIP / 2.0),
+				fb.y, FLOATING_SNAP_EDGE_STRIP, fb.height };
+			add_cand(cands, n, fcenter, &chl,
+				FLOATING_SNAP_CENTER);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=x id=%zu "
+				"edge=%.0f CENTER hl={%d,%d,%d,%d}",
+				f->node.id, fcenter,
+				chl.x, chl.y, chl.width, chl.height);
 		} else {
-			double p_lo = fb.x, p_hi = fb.x + fb.width;
 			struct wlr_box hl = { fb.x, fb.y, fb.width,
 				FLOATING_SNAP_EDGE_STRIP };
-			add_cand(cands, n, (double)fb.y - gap, &hl, true, p_lo, p_hi);
-			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=y id=%zu edge=%.0f "
-				"for_hi hl={%d,%d,%d,%d}", f->node.id,
-				(double)fb.y - gap,
+			add_cand(cands, n, (double)fb.y - gap, &hl,
+				FLOATING_SNAP_HI);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=y id=%zu "
+				"edge=%.0f HI-stack hl={%d,%d,%d,%d}",
+				f->node.id, (double)fb.y - gap,
 				hl.x, hl.y, hl.width, hl.height);
-			hl.y = fb.y + fb.height - FLOATING_SNAP_EDGE_STRIP;
-			add_cand(cands, n, (double)(fb.y + fb.height) + gap, &hl,
-				false, p_lo, p_hi);
-			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=y id=%zu edge=%.0f "
-				"for_lo hl={%d,%d,%d,%d}", f->node.id,
-				(double)(fb.y + fb.height) + gap,
+
+			struct wlr_box hl2 = { fb.x,
+				fb.y + fb.height - FLOATING_SNAP_EDGE_STRIP,
+				fb.width, FLOATING_SNAP_EDGE_STRIP };
+			add_cand(cands, n, (double)(fb.y + fb.height) + gap, &hl2,
+				FLOATING_SNAP_LO);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=y id=%zu "
+				"edge=%.0f LO-stack hl={%d,%d,%d,%d}",
+				f->node.id, (double)(fb.y + fb.height) + gap,
+				hl2.x, hl2.y, hl2.width, hl2.height);
+
+			add_cand(cands, n, (double)fb.y, &hl,
+				FLOATING_SNAP_LO);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=y id=%zu "
+				"edge=%.0f align-T hl={%d,%d,%d,%d}",
+				f->node.id, (double)fb.y,
 				hl.x, hl.y, hl.width, hl.height);
+
+			add_cand(cands, n, (double)(fb.y + fb.height), &hl2,
+				FLOATING_SNAP_HI);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=y id=%zu "
+				"edge=%.0f align-B hl={%d,%d,%d,%d}",
+				f->node.id, (double)(fb.y + fb.height),
+				hl2.x, hl2.y, hl2.width, hl2.height);
+
+			double fcenter = fb.y + fb.height / 2.0;
+			struct wlr_box chl = { fb.x,
+				(int)(fcenter - FLOATING_SNAP_EDGE_STRIP / 2.0),
+				fb.width, FLOATING_SNAP_EDGE_STRIP };
+			add_cand(cands, n, fcenter, &chl,
+				FLOATING_SNAP_CENTER);
+			sway_log(SWAY_DEBUG, "[FSNAP] cand axis=y id=%zu "
+				"edge=%.0f CENTER hl={%d,%d,%d,%d}",
+				f->node.id, fcenter,
+				chl.x, chl.y, chl.width, chl.height);
 		}
 	}
 }
 
 bool floating_snap_cand_valid(const struct floating_snap_cand *c,
-		bool moving_hi, double moving_edge,
-		double p_lo, double p_hi, int threshold) {
-	if (c->for_hi != moving_hi) {
+		enum floating_snap_role moving_role, double moving_edge_ref,
+		int threshold) {
+	if (c->role != moving_role) {
 		return false;
 	}
-	// AABB: the source window's perpendicular span must actually overlap
-	// ours (± threshold slack).
-	if (!(c->p_lo < p_hi + threshold && c->p_hi > p_lo - threshold)) {
-		return false;
-	}
-	return fabs(c->edge - moving_edge) <= threshold;
+	int eff_thr = threshold;
+	if (c->role == FLOATING_SNAP_CENTER)
+		eff_thr = threshold * 2;
+	return fabs(c->edge - moving_edge_ref) <= eff_thr;
 }
