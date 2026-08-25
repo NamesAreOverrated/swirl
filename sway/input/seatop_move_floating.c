@@ -30,32 +30,26 @@ struct snap_result {
 };
 
 static struct snap_result snap_axis(double lo, double hi,
-		double p_lo, double p_hi,
 		const struct floating_snap_cand *cands, int n, double threshold) {
 	struct snap_result res = {0};
-	sway_log(SWAY_DEBUG, "[FSNAP] scan axis lo=%.0f hi=%.0f "
-		"perp=[%.0f..%.0f] n=%d thr=%d",
-		lo, hi, p_lo, p_hi, n, (int)threshold);
+	sway_log(SWAY_DEBUG, "[FSNAP] scan axis lo=%.0f hi=%.0f n=%d thr=%d",
+		lo, hi, n, (int)threshold);
 	for (int i = 0; i < n; i++) {
-		// Direction-tagged: a candidate only matches the dragged edge it
-		// was generated for. AABB check: the source window's perpendicular
-		// span must actually overlap ours (± threshold slack) — this is
-		// what picks the BOTTOM window when we're beside it, not the top.
-		bool perp_ok = cands[i].p_lo < p_hi + threshold &&
-			cands[i].p_hi > p_lo - threshold;
-		double v = cands[i].for_hi ? hi : lo;
+		double v;
+		switch (cands[i].role) {
+		case FLOATING_SNAP_HI:     v = hi; break;
+		case FLOATING_SNAP_CENTER: v = lo + (hi - lo) / 2; break;
+		default:                   v = lo; break;
+		}
 		double d = cands[i].edge - v;
 		double mag = fabs(d);
-		sway_log(SWAY_DEBUG, "[FSNAP]   test edge=%.0f role=%s "
-			"perp=[%.0f..%.0f] d=%.0f %s%s", cands[i].edge,
-			cands[i].for_hi ? "hi" : "lo",
-			cands[i].p_lo, cands[i].p_hi, d,
-			perp_ok ? "perp-OK " : "PERP-REJECT ",
-			mag <= threshold ? "IN-THRESHOLD " : "skip ");
-		if (!perp_ok) {
-			continue;
-		}
-		if (mag <= threshold && (!res.hit || mag < fabs(res.shift))) {
+		int eff_thr = threshold;
+		if (cands[i].role == FLOATING_SNAP_CENTER)
+			eff_thr = threshold * 2;
+		sway_log(SWAY_DEBUG, "[FSNAP]   test edge=%.0f role=%d "
+			"d=%.0f %s", cands[i].edge, (int)cands[i].role, d,
+			mag <= eff_thr ? "IN-THRESHOLD" : "skip");
+		if (mag <= eff_thr && (!res.hit || mag < fabs(res.shift))) {
 			res.hit = true;
 			res.shift = d;
 			res.hl = cands[i].hl;
@@ -234,6 +228,7 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 				e->zone.x, e->zone.y, e->zone.width, e->zone.height);
 			indicator_show(e, &e->zone);
 		} else {
+			indicator_hide(e);
 			sway_log(SWAY_DEBUG, "[FSNAP] zone miss (L=%d R=%d T=%d B=%d)",
 				left, right, top, bottom);
 		}
@@ -246,27 +241,15 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 		floating_snap_collect(e->con, ws, false, cy, &ncy);
 
 		struct snap_result rx = snap_axis(nx,
-				nx + e->con->pending.width,
-				ny, ny + e->con->pending.height,
-				cx, ncx, threshold);
+				nx + e->con->pending.width, cx, ncx, threshold);
 		struct snap_result ry = snap_axis(ny,
-				ny + e->con->pending.height,
-				nx, nx + e->con->pending.width,
-				cy, ncy, threshold);
+				ny + e->con->pending.height, cy, ncy, threshold);
 
 		if (rx.hit) {
 			nx += rx.shift;
 		}
 		if (ry.hit) {
 			ny += ry.shift;
-		}
-
-		if (rx.hit) {
-			indicator_show(e, &rx.hl);
-		} else if (ry.hit) {
-			indicator_show(e, &ry.hl);
-		} else {
-			indicator_hide(e);
 		}
 	}
 
