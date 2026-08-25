@@ -277,6 +277,10 @@ void workspace_minimized_hide(struct sway_container *con) {
 	// overview can scope minimized windows correctly.
 	if (ws) {
 		list_add(ws->minimized, con);
+		// Save the output box so floating_fix_coordinates can properly
+		// map coordinates on restore. Without this, con->transform stays
+		// zeroed and the first minimize→restore cycle centers the window.
+		set_container_transform(ws, con);
 	}
 	// Hide the whole container subtree; the container keeps its scene node
 	// under the (now inactive) tiling/floating layer so it can be re-shown.
