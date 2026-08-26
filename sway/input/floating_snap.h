@@ -27,9 +27,11 @@ struct floating_snap_cand {
 // Collect floater-edge candidates on `horizontal` (or vertical) axis from
 // every other floating container on the workspace. Edges are offset by one
 // inner gap and direction-tagged so a dragged window's compatible edge is
-// unambiguous.
+// unambiguous. Also emits workspace usable-area edge candidates so windows
+// magnetize to workspace boundaries.
 void floating_snap_collect(struct sway_container *skip,
 		struct sway_workspace *ws, bool horizontal,
+		const struct wlr_box *ws_box,
 		struct floating_snap_cand *cands, int *n);
 
 // Validity test: role must match the moving edge reference (left/top,

@@ -7,6 +7,7 @@
 #include "sway/input/cursor.h"
 #include "floating_snap.h"
 #include "sway/input/seat.h"
+#include "sway/output.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
 #include "sway/tree/workspace.h"
@@ -88,23 +89,44 @@ static void finalize_move(struct sway_seat *seat) {
 		(int)con->pending.width, (int)con->pending.height);
 
 	if (e->zone_active) {
-		// Aero-snap commit: take over the previewed zone.
+		// Aero-snap commit: assign zone rect directly. No relative
+		// adjustment via int intermediates — those truncate fractional
+		// coordinates accumulated during freehand dragging.
 		const struct wlr_box *z = &e->zone;
-		int rel_x = z->x - con->pending.x;
-		int rel_y = z->y - con->pending.y;
-		int rel_w = z->width - con->pending.width;
-		int rel_h = z->height - con->pending.height;
+		double dx = z->x - con->pending.x;
+		double dy = z->y - con->pending.y;
+		double dw = z->width - con->pending.width;
+		double dh = z->height - con->pending.height;
 
-		con->pending.x += rel_x;
-		con->pending.y += rel_y;
-		con->pending.width += rel_w;
-		con->pending.height += rel_h;
-		con->pending.content_x += rel_x;
-		con->pending.content_y += rel_y;
-		con->pending.content_width += rel_w;
-		con->pending.content_height += rel_h;
+		con->pending.x = z->x;
+		con->pending.y = z->y;
+		con->pending.width = z->width;
+		con->pending.height = z->height;
+		con->pending.content_x += dx;
+		con->pending.content_y += dy;
+		con->pending.content_width += dw;
+		con->pending.content_height += dh;
+
+		sway_log(SWAY_DEBUG, "[FSNAP] post-adjust id=%zu "
+			"pending={%d,%d,%d,%d}",
+			con->node.id,
+			(int)con->pending.x, (int)con->pending.y,
+			(int)con->pending.width, (int)con->pending.height);
+
+		// Zero-translation output/workspace rediscovery: ensures the
+		// container lands on the correct output when zones fire across
+		// monitor boundaries during cross-output drags.
+		container_floating_move_to(con, con->pending.x, con->pending.y);
+		sway_log(SWAY_DEBUG, "[FSNAP] step move_to "
+			"pending={%d,%d,%d,%d}",
+			(int)con->pending.x, (int)con->pending.y,
+			(int)con->pending.width, (int)con->pending.height);
 
 		arrange_container(con);
+		sway_log(SWAY_DEBUG, "[FSNAP] step arrange1 "
+			"pending={%d,%d,%d,%d}",
+			(int)con->pending.x, (int)con->pending.y,
+			(int)con->pending.width, (int)con->pending.height);
 
 		// Bottom-anchored zones: pin our bottom edge to the workspace
 		// bottom so decoration shrinkage can't leave us visually short.
@@ -116,6 +138,10 @@ static void finalize_move(struct sway_seat *seat) {
 			if (e->zone.y + e->zone.height == ws_bottom) {
 				con->pending.y = ws_bottom - con->pending.height;
 				arrange_container(con);
+				sway_log(SWAY_DEBUG, "[FSNAP] step bottom-pin "
+					"pending={%d,%d,%d,%d}",
+					(int)con->pending.x, (int)con->pending.y,
+					(int)con->pending.width, (int)con->pending.height);
 			}
 		}
 
@@ -127,10 +153,12 @@ static void finalize_move(struct sway_seat *seat) {
 	con->node.dragging = false;
 	transaction_commit_dirty();
 	sway_log(SWAY_DEBUG, "[FSNAP] post-commit id=%zu "
-		"pending={%d,%d,%d,%d}",
+		"pending={%d,%d,%d,%d} current={%d,%d,%d,%d}",
 		con->node.id,
 		(int)con->pending.x, (int)con->pending.y,
-		(int)con->pending.width, (int)con->pending.height);
+		(int)con->pending.width, (int)con->pending.height,
+		(int)con->current.x, (int)con->current.y,
+		(int)con->current.width, (int)con->current.height);
 	sway_log(SWAY_DEBUG, "[FSNAP] watching for geometry changes...");
 
 	seatop_begin_default(seat);
@@ -176,20 +204,48 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 		cursor->x, cursor->y, nx, ny, threshold,
 		ws ? ws->name : "none");
 
-	// Aero-snap zones: cursor in an outer strip/corner of the usable area
-	// previews a target region; release commits position+size.
+	// Aero-snap zones: cursor near a physical monitor edge previews a
+	// target region; release commits position+size. Zone trigger uses the
+	// OUTPUT boundary (physical monitor edge) so zones fire immediately at
+	// screen edges regardless of workspace gaps. Slot geometry still uses
+	// ws_box fractions for placement within the workspace.
 	e->zone_active = false;
 	if (ws) {
 		struct wlr_box ws_box;
 		workspace_get_box(ws, &ws_box);
+		sway_log(SWAY_DEBUG, "[FSNAP] ws_box={%d,%d,%d,%d} "
+			"output={%d,%d,%d,%d} gaps_inner=%d",
+			ws_box.x, ws_box.y, ws_box.width, ws_box.height,
+			ws->output ? ws->output->lx : -1,
+			ws->output ? ws->output->ly : -1,
+			ws->output ? ws->output->width : -1,
+			ws->output ? ws->output->height : -1,
+			ws->gaps_inner);
 		int zx = ws_box.x, zy = ws_box.y;
 		int zw = ws_box.width, zh = ws_box.height;
 		int hw = zw / 2, hh = zh / 2;
 		int g = ws->gaps_inner;
-		bool left = cursor->x <= zx + ZONE_STRIP;
-		bool right = cursor->x >= zx + zw - ZONE_STRIP;
-		bool top = cursor->y <= zy + ZONE_STRIP;
-		bool bottom = cursor->y >= zy + zh - ZONE_STRIP;
+
+		// Find output under cursor for trigger detection
+		int tx = zx, ty = zy, tw = zw, th = zh;
+		for (int i = 0; i < root->outputs->length; ++i) {
+			struct sway_output *o = root->outputs->items[i];
+			struct wlr_box ob;
+			output_get_box(o, &ob);
+			if (cursor->x >= ob.x && cursor->x < ob.x + ob.width &&
+					cursor->y >= ob.y && cursor->y < ob.y + ob.height) {
+				tx = ob.x;
+				ty = ob.y;
+				tw = ob.width;
+				th = ob.height;
+				break;
+			}
+		}
+
+		bool left   = cursor->x <= tx + ZONE_STRIP;
+		bool right  = cursor->x >= tx + tw - ZONE_STRIP;
+		bool top    = cursor->y <= ty + ZONE_STRIP;
+		bool bottom = cursor->y >= ty + th - ZONE_STRIP;
 
 		if (left && top) {
 			e->zone = (struct wlr_box){ zx, zy, hw - g / 2, hh - g / 2 };
@@ -235,10 +291,12 @@ static void handle_pointer_motion(struct sway_seat *seat, uint32_t time_msec) {
 	}
 
 	if (!e->zone_active && threshold > 0 && ws && !e->con->minimized) {
+		struct wlr_box ws_box;
+		workspace_get_box(ws, &ws_box);
 		struct floating_snap_cand cx[FLOATING_SNAP_MAX_CANDS], cy[FLOATING_SNAP_MAX_CANDS];
 		int ncx = 0, ncy = 0;
-		floating_snap_collect(e->con, ws, true, cx, &ncx);
-		floating_snap_collect(e->con, ws, false, cy, &ncy);
+		floating_snap_collect(e->con, ws, true, &ws_box, cx, &ncx);
+		floating_snap_collect(e->con, ws, false, &ws_box, cy, &ncy);
 
 		struct snap_result rx = snap_axis(nx,
 				nx + e->con->pending.width, cx, ncx, threshold);

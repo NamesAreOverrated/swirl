@@ -56,6 +56,8 @@ static void snap_floating_resize(struct seatop_resize_floating_event *e,
 	if (threshold <= 0 || !ws) {
 		return;
 	}
+	struct wlr_box ws_box;
+	workspace_get_box(ws, &ws_box);
 
 	bool horiz = e->edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
 	bool vert = e->edge & (WLR_EDGE_TOP | WLR_EDGE_BOTTOM);
@@ -65,7 +67,7 @@ static void snap_floating_resize(struct seatop_resize_floating_event *e,
 	if (horiz) {
 		struct floating_snap_cand cands[FLOATING_SNAP_MAX_CANDS];
 		int n = 0;
-		floating_snap_collect(con, ws, true, cands, &n);
+		floating_snap_collect(con, ws, true, &ws_box, cands, &n);
 		// Absolute coordinate of the moving vertical edge.
 		bool moving_hi = e->edge & WLR_EDGE_RIGHT;
 		double moving = moving_hi
@@ -99,7 +101,7 @@ static void snap_floating_resize(struct seatop_resize_floating_event *e,
 	if (vert) {
 		struct floating_snap_cand cands[FLOATING_SNAP_MAX_CANDS];
 		int n = 0;
-		floating_snap_collect(con, ws, false, cands, &n);
+		floating_snap_collect(con, ws, false, &ws_box, cands, &n);
 		bool moving_hi = e->edge & WLR_EDGE_BOTTOM;
 		double moving = moving_hi
 			? e->ref_con_ly + *height

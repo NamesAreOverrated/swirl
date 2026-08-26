@@ -16,8 +16,29 @@ static void add_cand(struct floating_snap_cand *cands, int *n, double edge,
 
 void floating_snap_collect(struct sway_container *skip,
 		struct sway_workspace *ws, bool horizontal,
+		const struct wlr_box *ws_box,
 		struct floating_snap_cand *cands, int *n) {
 	int gap = ws->gaps_inner;
+
+	// Workspace usable-area edge candidates (ws_box is already gap-inset)
+	struct wlr_box edge_hl = {0}; // zero-size: no indicator for ws edges
+	{
+		double lx = ws_box->x;
+		double rx = ws_box->x + ws_box->width;
+		double ty = ws_box->y;
+		double by = ws_box->y + ws_box->height;
+		sway_log(SWAY_DEBUG, "[FSNAP] ws-edge cands axis=%s "
+			"L=%.0f R=%.0f T=%.0f B=%.0f",
+			horizontal ? "x" : "y", lx, rx, ty, by);
+		if (horizontal) {
+			add_cand(cands, n, lx, &edge_hl, FLOATING_SNAP_LO);
+			add_cand(cands, n, rx, &edge_hl, FLOATING_SNAP_HI);
+		} else {
+			add_cand(cands, n, ty, &edge_hl, FLOATING_SNAP_LO);
+			add_cand(cands, n, by, &edge_hl, FLOATING_SNAP_HI);
+		}
+	}
+
 	for (int i = 0; i < ws->floating->length; i++) {
 		struct sway_container *f = ws->floating->items[i];
 		if (f == skip || f->minimized) {
