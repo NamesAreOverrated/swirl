@@ -72,7 +72,7 @@ static struct cmd_results *parse_edge_binding(int argc, char **argv,
 	}
 	argi++;
 
-	// Command: join remaining args
+	// Command: join remaining args (preserves `;` as separate token for chaining)
 	char *command = join_args(argv + argi, argc - argi);
 	if (!command || !*command) {
 		free(workspace_name);
