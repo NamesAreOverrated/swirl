@@ -296,6 +296,9 @@ void workspace_minimized_hide(struct sway_container *con) {
 	if (ws && !ws->node.destroying) {
 		ipc_event_workspace(ws, ws, "minimized");
 	}
+	if (con->view) {
+		view_set_activated(con->view, false);
+	}
 	view_container_set_foreign_minimized(con, true);
 }
 
