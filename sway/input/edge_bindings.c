@@ -6,6 +6,7 @@
 #include "sway/input/input-manager.h"
 #include "sway/input/cursor.h"
 #include "sway/config.h"
+#include "sway/desktop/launcher.h"
 #include "sway/output.h"
 #include "sway/tree/root.h"
 #include "sway/tree/workspace.h"
@@ -69,14 +70,24 @@ static void compute_edge_zone(struct wlr_box *zone,
 }
 
 static void edge_binding_exec(const char *cmd) {
+	struct launcher_ctx *ctx = launcher_ctx_create_internal();
 	pid_t pid = fork();
 	if (pid == 0) {
 		setsid();
+		if (ctx) {
+			const char *token = launcher_ctx_get_token_name(ctx);
+			setenv("XDG_ACTIVATION_TOKEN", token, 1);
+			setenv("DESKTOP_STARTUP_ID", token, 1);
+		}
 		close(STDIN_FILENO);
 		close(STDOUT_FILENO);
 		close(STDERR_FILENO);
-		execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+		execlp("sh", "sh", "-c", cmd, (char *)NULL);
 		_exit(127);
+	} else if (pid < 0) {
+		launcher_ctx_destroy(ctx);
+	} else if (ctx) {
+		ctx->pid = pid;
 	}
 }
 
