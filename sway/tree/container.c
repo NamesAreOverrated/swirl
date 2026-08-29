@@ -397,6 +397,7 @@ struct maximize_snapshot {
   struct sway_container *con;
   double wf;
   double hf;
+  double px_w;
 };
 
 void container_toggle_maximize(struct sway_container *con) {
@@ -446,6 +447,7 @@ void container_toggle_maximize(struct sway_container *con) {
       s->con = c;
       s->wf = c->width_fraction;
       s->hf = c->height_fraction;
+      s->px_w = c->pending.width;
       list_add(con->max_snapshot, s);
     }
     for (int i = 0; i < col->pending.children->length; i++) {
@@ -454,17 +456,18 @@ void container_toggle_maximize(struct sway_container *con) {
       s->con = c;
       s->wf = c->width_fraction;
       s->hf = c->height_fraction;
+      s->px_w = c->pending.width;
       list_add(con->max_snapshot, s);
     }
 
     double basis_w = ws->width - ws->gaps_inner;
     double basis_h = ws->height - ws->gaps_inner;
-    double focused_wf = 1.0;
     double focused_hf = 1.0;
     // Match the manual resize steady state: siblings pin to their floors and
     // the focused window takes the rest (not a 1.0 share that sums >1 and
     // inflates the focused window past what manual resizing can reach).
-    if (ws->tiling->length > 1 && basis_w > 0) {
+    // Keep pending.width and width_fraction in sync for pixel-faithful arrange.
+    if (basis_w > 0) {
       double child_total_width = fmax(0,
           ws->width - ws->gaps_inner * (ws->tiling->length - 1));
       double width_px = child_total_width;
@@ -475,11 +478,9 @@ void container_toggle_maximize(struct sway_container *con) {
         }
         double min_px = container_clamp_tiled_width_min(c);
         width_px -= min_px;
-        double new_wf = min_px / basis_w;
-        c->width_fraction = new_wf;
+        column_set_width_px(c, min_px);
       }
-      focused_wf = width_px / basis_w;
-      col->width_fraction = focused_wf;
+      column_set_width_px(col, width_px);
     }
     if (col->pending.children->length > 1 && basis_h > 0) {
       double usable_col_h = fmax(0, col->pending.height
@@ -504,7 +505,12 @@ void container_toggle_maximize(struct sway_container *con) {
   } else {
     for (int i = 0; i < con->max_snapshot->length; i++) {
       struct maximize_snapshot *s = con->max_snapshot->items[i];
-      s->con->width_fraction = s->wf;
+      // Restore pixel width via column_set_width_px for pixel-faithful arrange.
+      if (s->con->pending.workspace) {
+        column_set_width_px(s->con, s->px_w);
+      } else {
+        s->con->width_fraction = s->wf;
+      }
       s->con->height_fraction = s->hf;
     }
     for (int i = 0; i < con->max_snapshot->length; i++) {

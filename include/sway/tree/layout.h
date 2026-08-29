@@ -10,5 +10,6 @@ double workspace_view_remaining_width(struct sway_workspace *ws, int start_index
 double workspace_clamp_column_width(struct sway_workspace *ws, double pixel_width);
 double workspace_width_to_fraction(struct sway_workspace *ws, double pixel_width);
 double workspace_height_to_fraction(struct sway_workspace *ws, double pixel_height);
+void column_set_width_px(struct sway_container *col, double width_px);
 
 #endif
