@@ -24,6 +24,7 @@
 #include "sway/output.h"
 #include "sway/server.h"
 #include "sway/input/input-manager.h"
+#include <ctype.h>
 #include "sway/input/keyboard.h"
 #include "sway/input/seat.h"
 #include "sway/tree/root.h"
@@ -620,6 +621,46 @@ static void ipc_get_workspaces_callback(struct sway_workspace *workspace,
 			json_object_new_boolean(visible));
 }
 
+static json_object *create_synthetic_workspace_json(const char *name,
+		const char *output_name) {
+	int num = -1;
+	if (isdigit(name[0])) {
+		char *endptr = NULL;
+		errno = 0;
+		long long parsed = strtoll(name, &endptr, 10);
+		if (errno == 0 && parsed <= INT32_MAX && parsed >= 0 && endptr != name) {
+			num = (int)parsed;
+		}
+	}
+	// Stable negative id per name to avoid flicker (waybar tracks by id)
+	int id = -1000;
+	if (num != -1) {
+		id = -(1000 + num);
+	} else {
+		// hash name
+		unsigned int h = 0;
+		for (const char *p = name; *p; ++p) h = h * 31 + (unsigned char)*p;
+		id = -(2000 + (h % 1000));
+	}
+	json_object *obj = json_object_new_object();
+	json_object_object_add(obj, "id", json_object_new_int(id));
+	json_object_object_add(obj, "name", json_object_new_string(name));
+	json_object_object_add(obj, "type", json_object_new_string("workspace"));
+	json_object_object_add(obj, "num", json_object_new_int(num));
+	json_object_object_add(obj, "output", output_name ?
+			json_object_new_string(output_name) : NULL);
+	json_object_object_add(obj, "focused", json_object_new_boolean(false));
+	json_object_object_add(obj, "visible", json_object_new_boolean(false));
+	json_object_object_add(obj, "urgent", json_object_new_boolean(false));
+	json_object_object_add(obj, "rect", json_object_new_object());
+	json_object_object_add(obj, "deco_rect", json_object_new_object());
+	json_object_object_add(obj, "window_rect", json_object_new_object());
+	json_object_object_add(obj, "geometry", json_object_new_object());
+	json_object_object_add(obj, "nodes", json_object_new_array());
+	json_object_object_add(obj, "floating_nodes", json_object_new_array());
+	return obj;
+}
+
 static void ipc_get_marks_callback(struct sway_container *con, void *data) {
 	json_object *marks = (json_object *)data;
 	for (int i = 0; i < con->marks->length; ++i) {
@@ -739,6 +780,18 @@ void ipc_client_handle_command(struct ipc_client *client, uint32_t payload_lengt
 	{
 		json_object *workspaces = json_object_new_array();
 		root_for_each_workspace(ipc_get_workspaces_callback, workspaces);
+		// Consistently fake assigned workspaces (workspace <name> output <output>)
+		// even before first creation, so waybar persistent-workspaces never flickers.
+		// This is IPC-only; real output->workspaces still has no such ws until
+		// workspace <name> is actually switched to (workspace_create).
+		for (int i = 0; i < config->workspace_configs->length; ++i) {
+			struct workspace_config *wsc = config->workspace_configs->items[i];
+			if (!wsc->workspace || !wsc->outputs || !wsc->outputs->length) continue;
+			if (workspace_by_name(wsc->workspace)) continue;
+			const char *output_name = wsc->outputs->items[0];
+			json_object *syn = create_synthetic_workspace_json(wsc->workspace, output_name);
+			json_object_array_add(workspaces, syn);
+		}
 		const char *json_string = json_object_to_json_string(workspaces);
 		ipc_send_reply(client, payload_type, json_string,
 			(uint32_t)strlen(json_string));
@@ -836,6 +889,47 @@ void ipc_client_handle_command(struct ipc_client *client, uint32_t payload_lengt
 	case IPC_GET_TREE:
 	{
 		json_object *tree = ipc_json_describe_node_recursive(&root->node);
+		// Consistently fake assigned workspaces in tree as well (waybar uses GET_TREE)
+		json_object *output_nodes = NULL;
+		if (json_object_object_get_ex(tree, "nodes", &output_nodes)) {
+			for (int i = 0; i < config->workspace_configs->length; ++i) {
+				struct workspace_config *wsc = config->workspace_configs->items[i];
+				if (!wsc->workspace || !wsc->outputs || !wsc->outputs->length) continue;
+				if (workspace_by_name(wsc->workspace)) continue;
+				const char *output_name = wsc->outputs->items[0];
+				// Find output JSON node with matching name
+				json_object *output_json = NULL;
+				for (size_t oi = 0; oi < json_object_array_length(output_nodes); ++oi) {
+					json_object *out = json_object_array_get_idx(output_nodes, oi);
+					json_object *out_name_obj = NULL;
+					if (json_object_object_get_ex(out, "name", &out_name_obj)) {
+						const char *out_name = json_object_get_string(out_name_obj);
+						if (out_name && !strcmp(out_name, output_name)) {
+							output_json = out;
+							break;
+						}
+					}
+				}
+				if (!output_json) continue;
+				json_object *ws_nodes = NULL;
+				if (!json_object_object_get_ex(output_json, "nodes", &ws_nodes)) continue;
+				// Check if workspace already exists in this output's nodes
+				bool exists = false;
+				for (size_t wi = 0; wi < json_object_array_length(ws_nodes); ++wi) {
+					json_object *ws = json_object_array_get_idx(ws_nodes, wi);
+					json_object *ws_name_obj = NULL;
+					if (json_object_object_get_ex(ws, "name", &ws_name_obj)) {
+						const char *ws_name = json_object_get_string(ws_name_obj);
+						if (ws_name && !strcmp(ws_name, wsc->workspace)) { exists = true; break; }
+					}
+				}
+				if (exists) continue;
+				json_object *syn = create_synthetic_workspace_json(wsc->workspace, output_name);
+				// Tree workspace nodes need additional fields that GET_WORKSPACES doesn't: type, id, etc. already in syn
+				// Ensure nodes/floating_nodes are present for waybar's payload iteration
+				json_object_array_add(ws_nodes, syn);
+			}
+		}
 		const char *json_string = json_object_to_json_string(tree);
 		ipc_send_reply(client, payload_type, json_string,
 			(uint32_t)strlen(json_string));
