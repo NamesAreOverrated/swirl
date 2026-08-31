@@ -27,6 +27,13 @@ static void overview_action_focus(struct overview_thumbnail *t) {
   // reference across a switch that may have reaped the old workspace.
   struct sway_container *target = container_toplevel_ancestor(t->con);
   seat_set_focus_container(overview_state.seat, target);
+  // Bring floating windows to the top on focus for all cases, matching
+  // mouse-click focus which raises via container_raise_floating in
+  // view.c/seatop. Without this, focusing a floating window via overview
+  // (Tab/Enter or click) leaves it under other floatings.
+  if (container_is_floating(target)) {
+    container_raise_floating(target);
+  }
   transaction_commit_dirty();
 }
 
@@ -148,6 +155,7 @@ void overview_swap_container(struct sway_container *focus_top,
     return;
   if (focus_float) {
     workspace_swap_floating(focus_top, target);
+    container_raise_floating(target);
   } else {
     workspace_swap_columns(focus_top, target);
   }

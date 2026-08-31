@@ -53,6 +53,7 @@ void overview_set_params(enum overview_scope scope,
 		enum overview_action action, int content_flags);
 void overview_toggle(void);
 bool overview_handle_key(xkb_keysym_t sym);
+bool overview_handle_key_release(xkb_keysym_t sym);
 void overview_handle_button(struct sway_seat *seat, uint32_t button,
 		bool pressed);
 void overview_handle_motion(struct sway_seat *seat);

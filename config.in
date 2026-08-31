@@ -155,6 +155,10 @@ output * bg @datadir@/backgrounds/sway/Sway_Wallpaper_Blue_1920x1080.png fill
 
     # Toggle workspace overview
     bindsym $mod+o overview current focus
+    # Tab-cycling works in all overview modes (Tab / Shift+Tab to cycle, Enter to select, Esc to cancel, digits 01+)
+    # Floating/tiled focus overview: just switch focus (reuses overview thumbnails/grid, no pull/swap)
+    bindsym $mod+f overview current focus floating
+    bindsym $mod+t overview current focus tiling
 
     # Toggle the current focus between tiling and floating mode
     bindsym $mod+Shift+space floating toggle

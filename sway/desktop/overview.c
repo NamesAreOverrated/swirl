@@ -261,9 +261,130 @@ void overview_handle_motion(struct sway_seat *seat) {
   }
 }
 
+static struct overview_thumbnail *overview_find_hovered(void) {
+  if (!overview_state.hover_rect || !overview_state.hover_rect->node.enabled)
+    return NULL;
+  int hx = overview_state.hover_rect->node.x;
+  int hy = overview_state.hover_rect->node.y;
+  int hw = overview_state.hover_rect->width;
+  int hh = overview_state.hover_rect->height;
+  // hover_rect is padded by 4px around thumbnail; find thumbnail whose padded rect matches
+  struct overview_thumbnail *t;
+  wl_list_for_each(t, &overview_state.thumbnails, link) {
+    if (!t->sb) continue;
+    int tx, ty;
+    wlr_scene_node_coords(&t->sb->node, &tx, &ty);
+    int dw = t->sb->dst_width;
+    int dh = t->sb->dst_height;
+    int pad = 4;
+    if (hx == tx - pad && hy == ty - pad && hw == dw + 2*pad && hh == dh + 2*pad)
+      return t;
+  }
+  return NULL;
+}
+
+static void overview_set_hover(struct overview_thumbnail *t) {
+  if (!t || !t->sb || !overview_state.hover_rect) return;
+  int tx, ty;
+  wlr_scene_node_coords(&t->sb->node, &tx, &ty);
+  int dw = t->sb->dst_width;
+  int dh = t->sb->dst_height;
+  int pad = 4;
+  wlr_scene_rect_set_size(overview_state.hover_rect, dw + 2*pad, dh + 2*pad);
+  wlr_scene_node_set_position(&overview_state.hover_rect->node, tx - pad, ty - pad);
+  wlr_scene_node_set_enabled(&overview_state.hover_rect->node, true);
+}
+
+static void overview_cycle_hover(bool reverse) {
+  if (wl_list_empty(&overview_state.thumbnails) || !overview_state.hover_rect)
+    return;
+  struct overview_thumbnail *cur = overview_find_hovered();
+  struct overview_thumbnail *next = NULL;
+  if (!cur) {
+    // No hover yet: start at first (or last for reverse)
+    if (reverse) {
+      next = wl_container_of(overview_state.thumbnails.prev, next, link);
+    } else {
+      next = wl_container_of(overview_state.thumbnails.next, next, link);
+    }
+  } else {
+    if (reverse) {
+      next = wl_container_of(cur->link.prev, next, link);
+      if (&next->link == &overview_state.thumbnails) {
+        next = wl_container_of(overview_state.thumbnails.prev, next, link);
+      }
+    } else {
+      next = wl_container_of(cur->link.next, next, link);
+      if (&next->link == &overview_state.thumbnails) {
+        next = wl_container_of(overview_state.thumbnails.next, next, link);
+      }
+    }
+  }
+  overview_set_hover(next);
+  overview_state.tab_cycled = true;
+}
+
+bool overview_handle_key_release(xkb_keysym_t sym) {
+  if (!overview_active || !overview_state.tab_cycled)
+    return false;
+  // Auto-confirm on $mod release only after ≥1 Tab cycle, respecting set $mod Mod* via trigger_mods
+  // trigger_mods is the modifier mask held at overview activation; check if released key is a modifier that was in trigger_mods
+  // For simplicity, treat Super/Alt/Ctrl/Shift/Hyper as mod candidates; if any trigger mod is no longer held, auto-confirm.
+  // We can't easily query current mods here without seat, so check keysym is a modifier and trigger_mods had it.
+  bool is_mod = (sym == XKB_KEY_Super_L || sym == XKB_KEY_Super_R ||
+                 sym == XKB_KEY_Alt_L || sym == XKB_KEY_Alt_R ||
+                 sym == XKB_KEY_Control_L || sym == XKB_KEY_Control_R ||
+                 sym == XKB_KEY_Shift_L || sym == XKB_KEY_Shift_R ||
+                 sym == XKB_KEY_Hyper_L || sym == XKB_KEY_Hyper_R ||
+                 sym == XKB_KEY_Meta_L || sym == XKB_KEY_Meta_R);
+  if (!is_mod)
+    return false;
+  // Verify this mod was part of trigger (if trigger_mods is 0, allow any mod release when tab_cycled)
+  // trigger_mods uses WLR_MODIFIER_* bits; map keysym to bit
+  uint32_t bit = 0;
+  if (sym == XKB_KEY_Super_L || sym == XKB_KEY_Super_R || sym == XKB_KEY_Meta_L || sym == XKB_KEY_Meta_R)
+    bit = WLR_MODIFIER_LOGO;
+  else if (sym == XKB_KEY_Alt_L || sym == XKB_KEY_Alt_R)
+    bit = WLR_MODIFIER_ALT;
+  else if (sym == XKB_KEY_Control_L || sym == XKB_KEY_Control_R)
+    bit = WLR_MODIFIER_CTRL;
+  else if (sym == XKB_KEY_Shift_L || sym == XKB_KEY_Shift_R)
+    bit = WLR_MODIFIER_SHIFT;
+  else if (sym == XKB_KEY_Hyper_L || sym == XKB_KEY_Hyper_R)
+    bit = WLR_MODIFIER_MOD3;
+  if (overview_state.trigger_mods && !(overview_state.trigger_mods & bit))
+    return false;
+  struct overview_thumbnail *t = overview_find_hovered();
+  if (!t && !wl_list_empty(&overview_state.thumbnails)) {
+    t = wl_container_of(overview_state.thumbnails.next, t, link);
+  }
+  if (t && t->con) {
+    overview_dispatch_action(t);
+  }
+  overview_toggle();
+  return true;
+}
+
 bool overview_handle_key(xkb_keysym_t sym) {
   if (!overview_active)
     return false;
+
+  if (sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab) {
+    bool rev = (sym == XKB_KEY_ISO_Left_Tab);
+    overview_cycle_hover(rev);
+    return true;
+  }
+  if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) {
+    struct overview_thumbnail *t = overview_find_hovered();
+    if (!t && !wl_list_empty(&overview_state.thumbnails)) {
+      t = wl_container_of(overview_state.thumbnails.next, t, link);
+    }
+    if (t && t->con) {
+      overview_dispatch_action(t);
+    }
+    overview_toggle();
+    return true;
+  }
 
   int digit = -1;
   if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
@@ -477,6 +598,14 @@ static bool overview_setup(struct sway_output *output) {
   overview_state.focus_con = seat_get_focused_container(overview_state.seat);
   overview_state.digit_buf = 0;
   overview_state.digit_count = 0;
+  overview_state.tab_cycled = false;
+  overview_state.trigger_mods = 0;
+  if (overview_state.seat && overview_state.seat->wlr_seat && overview_state.seat->wlr_seat->keyboard_state.keyboard) {
+    struct wlr_keyboard *kb = wlr_seat_get_keyboard(overview_state.seat->wlr_seat);
+    if (kb) {
+      overview_state.trigger_mods = wlr_keyboard_get_modifiers(kb);
+    }
+  }
 
   float scale = output->wlr_output->scale;
   int ow = (int)(output->wlr_output->width / scale);

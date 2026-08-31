@@ -453,11 +453,17 @@ static void handle_key_event(struct sway_keyboard *keyboard,
 	struct key_info keyinfo;
 	update_keyboard_state(keyboard, event->keycode, event->state, &keyinfo);
 
-	if (overview_is_active() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED &&
-			keyinfo.translated_keysyms_len > 0 && !keyboard->wlr->group) {
-		if (overview_handle_key(keyinfo.translated_keysyms[0])) {
-			free(device_identifier);
-			return;
+	if (overview_is_active() && keyinfo.translated_keysyms_len > 0 && !keyboard->wlr->group) {
+		if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+			if (overview_handle_key(keyinfo.translated_keysyms[0])) {
+				free(device_identifier);
+				return;
+			}
+		} else if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+			if (overview_handle_key_release(keyinfo.translated_keysyms[0])) {
+				free(device_identifier);
+				return;
+			}
 		}
 	}
 

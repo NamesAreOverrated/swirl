@@ -47,6 +47,8 @@ struct overview_state {
   enum overview_scope scope;
   enum overview_action action;
   int content;
+  uint32_t trigger_mods; // mods held at overview activation (to respect set $mod Mod1/Mod4)
+  bool tab_cycled; // true after ≥1 Tab cycle, for auto-confirm on $mod release
 };
 
 extern struct overview_state overview_state;
