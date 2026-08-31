@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/transform.h>
@@ -260,6 +261,24 @@ void workspace_minimized_hide(struct sway_container *con) {
 	// must keep the toplevel's output association (for taskbars) once the
 	// window is minimized.
 	con->minimized = true;
+	// For non-active children of a tabbed/stacked parent, the view never got
+	// wlr_foreign_toplevel output_enter (only the active tab does). The
+	// handle_outputs_update early-return at view.c:55 keeps the existing
+	// outputs list for active tabs, but for background tabs that list is empty.
+	// Synthesize an output_enter for the workspace's output so Waybar's
+	// wlr/taskbar (and tiny-strip) can still show the minimized window
+	// on the bar's monitor.
+	if (con->view && con->view->foreign_toplevel && ws && ws->output && ws->output->wlr_output) {
+		struct wlr_foreign_toplevel_handle_v1 *toplevel = con->view->foreign_toplevel;
+		bool has_output = false;
+		struct wlr_foreign_toplevel_handle_v1_output *top_out, *tmp;
+		wl_list_for_each_safe(top_out, tmp, &toplevel->outputs, link) {
+			if (top_out->output == ws->output->wlr_output) { has_output = true; break; }
+		}
+		if (!has_output) {
+			wlr_foreign_toplevel_handle_v1_output_enter(toplevel, ws->output->wlr_output);
+		}
+	}
 	// Reparent the scene node to the staging tree *before* detaching so that
 	// reaping the now-empty parent column (a lone tiling window) cannot
 	// destroy it. Otherwise the minimized view's scene node is freed along
